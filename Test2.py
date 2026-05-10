@@ -167,8 +167,11 @@ class MermaidGenerator:
     def parse_prompt(self, prompt_text, complexity_level="Standard"):
         print('parsing prompt with hardcoded rules')
         if not prompt_text or not isinstance(prompt_text, str):
-            return {"components": self.get_default_components("en"), "layout": "horizontal",
-                    "voltage": "230V / 415V", "language": "en", "complexity": complexity_level}
+            return {"components": self.get_default_components("en"), 
+                    "layout": "horizontal",
+                    "voltage": "230V / 415V", 
+                    "language": "en", 
+                    "complexity": complexity_level}
 
         prompt = prompt_text.lower()
         language = self.detect_language(prompt_text)
@@ -277,13 +280,13 @@ class MermaidGenerator:
         lines.append("    end")
         lines.append("")
 
-        dist_order = ["outcb", "bus", "maincb"]
-        right_dist = next((pid[c] for c in dist_order if c in comp_map), None)
-
         # ── Section 1: Incoming Power Entry ──────────────────────────────────
         if "supply" in comp_map:
-            note_right = right_dist or pid["supply"]
+            # Span the note to the rightmost present participant across all boxes
+            note_right_order = ["ebar", "nbar", "outcb", "bus", "maincb", "loads"]
+            note_right = next((pid[c] for c in note_right_order if c in comp_map), pid["supply"])
             lines.append(f'    Note over {pid["supply"]},{note_right}: {L["note_power_entry"][language]}')
+
             if "maincb" in comp_map:
                 lines.append(f'    {pid["supply"]}->>{pid["maincb"]}: {L["wire_phase"][language]}')
             if cfg["show_neutral"] and "nbar" in comp_map:
@@ -293,10 +296,16 @@ class MermaidGenerator:
             lines.append("")
 
         # ── Section 2: Internal Distribution ─────────────────────────────────
-        if right_dist and "maincb" in comp_map:
-            lines.append(f'    Note over {pid["maincb"]},{right_dist}: {L["note_internal"][language]}')
+        if "maincb" in comp_map:
+            # Span the note across whatever distribution components are present
+            dist_right_order = ["outcb", "ebar", "nbar", "bus"]
+            dist_right = next((pid[c] for c in dist_right_order if c in comp_map), pid["maincb"])
+            lines.append(f'    Note over {pid["maincb"]},{dist_right}: {L["note_internal"][language]}')
+
             if "bus" in comp_map:
                 lines.append(f'    {pid["maincb"]}->>{pid["bus"]}: {L["action_energize"][language]}')
+                # Protection note always shown when bus+outcb present (matches second impl),
+                # but still respects show_protection_notes flag from complexity config.
                 if cfg["show_protection_notes"]:
                     lines.append(f'    Note right of {pid["maincb"]}: {L["action_protection"][language]}')
                 if "outcb" in comp_map:
@@ -324,7 +333,6 @@ class MermaidGenerator:
             lines.append(f'    {pid["ebar"]}-->>{pid["maincb"]}: {L["action_fault"][language]}')
 
         return "\n".join(lines)
-
     
 
     def generate_display_html(self, mermaid_code, parsed_data, title=None, enable_editing=True):
@@ -376,6 +384,7 @@ class EnhancedMermaidEditor {
         this.lineDrag    = null;
         this.editState   = null;
         this.svgEl       = null;
+        this.resizeState = null;   
         this._waitForSVG();
     }
 
@@ -406,19 +415,34 @@ class EnhancedMermaidEditor {
         });
     }
 
+
+    _onNoteResizeStart(e, g, rect, side) {
+        const pt = this._screenToSVG(e.clientX, e.clientY);
+        this.resizeState = {
+            g,
+            rect,
+            side,                                           // 'left' or 'right'
+            startX:    pt.x,
+            origX:     parseFloat(rect.getAttribute('x')),
+            origWidth: parseFloat(rect.getAttribute('width')),
+        };
+        rect.style.outline = '2px dashed #f59e0b';         // visual feedback
+    }
+
     _groupActorBoxes(svg) {
         const seen = new Set();
-        svg.querySelectorAll('rect.note, rect[class*="note"]').forEach((rect, idx) => {
+        // After the existing note-grouping loop, add:
+        svg.querySelectorAll('rect.actor, rect[class*="actor"]').forEach((rect, idx) => {
             if (seen.has(rect)) return;
             seen.add(rect);
 
             const rBBox = rect.getBoundingClientRect();
             if (rBBox.width < 4 || rBBox.height < 4) return;
 
+            // Find text labels that overlap this actor rect
             const matchedTexts = Array.from(svg.querySelectorAll('text')).filter(t => {
                 if (seen.has(t)) return false;
                 const tBBox = t.getBoundingClientRect();
-                if (tBBox.width === 0 && tBBox.height === 0) return false;
                 const tCx = tBBox.left + tBBox.width / 2;
                 const tCy = tBBox.top + tBBox.height / 2;
                 const tol = 8;
@@ -427,24 +451,105 @@ class EnhancedMermaidEditor {
             });
             matchedTexts.forEach(t => seen.add(t));
 
+            // Also grab the actor LINE (vertical lifeline) associated with this box
+            // Mermaid draws lifelines as <line class="actor-line"> sharing the same x center
+            const rectCenterX = rBBox.left + rBBox.width / 2;
+            const matchedLines = Array.from(svg.querySelectorAll('line.actor-line, line[class*="actor"]')).filter(line => {
+                const svgPt = svg.createSVGPoint();
+                const lx1 = parseFloat(line.getAttribute('x1'));
+                const svgRect = svg.getBoundingClientRect();
+                const scaleX = svgRect.width / parseFloat(svg.getAttribute('viewBox')?.split(' ')[2] || svgRect.width);
+                const lineScreenX = svgRect.left + lx1 * scaleX;
+                return Math.abs(lineScreenX - rectCenterX) < 10;
+            });
+
             const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            g.setAttribute('data-actor-group', `note-${idx}`);
-            g.setAttribute('data-draggable', `note-${idx}`);
+            g.setAttribute('data-actor-group', `actor-${idx}`);
+            g.setAttribute('data-draggable', `actor-${idx}`);
             g.setAttribute('data-tx', '0');
             g.setAttribute('data-ty', '0');
+            g.setAttribute('data-actor-lines', JSON.stringify(
+                matchedLines.map((_, i) => `actor-line-ref-${idx}-${i}`)
+            ));
             g.style.cursor = 'grab';
 
             rect.parentNode.insertBefore(g, rect);
             g.appendChild(rect);
             matchedTexts.forEach(t => g.appendChild(t));
+            // Store line refs but keep lines in DOM (don't move them with box)
+            g._actorLines = matchedLines;
 
             g.addEventListener('mousedown', e => this._onBoxMouseDown(e, g));
-            g.addEventListener('touchstart', e => this._onBoxTouchStart(e, g), {passive: false});
-            g.addEventListener('mouseenter', () => {
-                if (!this.dragState) rect.style.filter = 'drop-shadow(0 0 6px rgba(251,191,36,0.8))';
+            // ... hover effects same as note boxes
+
+
+                        // After building the note group `g`:
+            const toggle = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            toggle.textContent = '▲';
+            toggle.setAttribute('font-size', '10');
+            toggle.setAttribute('fill', '#92400e');
+            toggle.setAttribute('cursor', 'pointer');
+            toggle.setAttribute('data-collapsed', 'false');
+
+            // Position at top-right corner of the note rect
+            const rX = parseFloat(rect.getAttribute('x') || 0);
+            const rY = parseFloat(rect.getAttribute('y') || 0);
+            const rW = parseFloat(rect.getAttribute('width') || 60);
+            toggle.setAttribute('x', rX + rW - 14);
+            toggle.setAttribute('y', rY + 12);
+
+            toggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const collapsed = toggle.getAttribute('data-collapsed') === 'true';
+                const noteTexts = g.querySelectorAll('text:not([data-toggle])');
+                const noteRect  = g.querySelector('rect');
+                
+                if (!collapsed) {
+                    // Minimize: shrink rect height, hide text
+                    noteRect._fullHeight = noteRect.getAttribute('height');
+                    noteRect.setAttribute('height', '16');
+                    noteTexts.forEach(t => { t._prevVis = t.style.display; t.style.display = 'none'; });
+                    toggle.textContent = '▼';
+                    toggle.setAttribute('data-collapsed', 'true');
+                } else {
+                    // Restore
+                    if (noteRect._fullHeight) noteRect.setAttribute('height', noteRect._fullHeight);
+                    noteTexts.forEach(t => { t.style.display = t._prevVis || ''; });
+                    toggle.textContent = '▲';
+                    toggle.setAttribute('data-collapsed', 'false');
+                }
             });
-            g.addEventListener('mouseleave', () => {
-                if (!this.dragState) rect.style.filter = '';
+
+            toggle.setAttribute('data-toggle', 'true');
+            g.appendChild(toggle);
+            // After g.appendChild(rect) and texts, add resize handles:
+            const MIN_NOTE_WIDTH = 60; // minimum enforced width in SVG units
+
+            ['left', 'right'].forEach(side => {
+                const handle = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                const rX = parseFloat(rect.getAttribute('x') || 0);
+                const rY = parseFloat(rect.getAttribute('y') || 0);
+                const rH = parseFloat(rect.getAttribute('height') || 30);
+                const rW = parseFloat(rect.getAttribute('width') || 100);
+
+                handle.setAttribute('x', side === 'left' ? rX - 4 : rX + rW - 4);
+                handle.setAttribute('y', rY);
+                handle.setAttribute('width', '8');
+                handle.setAttribute('height', rH);
+                handle.setAttribute('fill', 'transparent');
+                handle.setAttribute('cursor', 'ew-resize');
+                handle.setAttribute('data-resize-handle', side);
+                handle.style.cursor = 'ew-resize';
+
+                handle.addEventListener('mousedown', e => {
+                    e.stopPropagation(); // prevent box drag from firing
+                    this._onNoteResizeStart(e, g, rect, side);
+                });
+
+                g.appendChild(handle);
+                // Store handle refs on the group for later repositioning
+                if (!g._resizeHandles) g._resizeHandles = {};
+                g._resizeHandles[side] = handle;
             });
         });
     }
@@ -468,6 +573,8 @@ class EnhancedMermaidEditor {
     }
 
     _onBoxMouseDown(e, g) {
+        if (e.target.getAttribute('data-resize-handle')) return;
+        e.stopPropagation()
         e.stopPropagation();
         const pt = this._screenToSVG(e.clientX, e.clientY);
         this.dragState = {g, startX: pt.x, startY: pt.y,
@@ -495,16 +602,57 @@ class EnhancedMermaidEditor {
             const hit = this._getLineEndpointHit(el, pt);
             if (hit) mode = hit;
         }
-        this.pendingLineDrag = {el, sx: pt.x, sy: pt.y, mode};
+        // this.pendingLineDrag = {el, sx: pt.x, sy: pt.y, mode};
     }
 
     _onMouseMove(e) {
+        if (this.resizeState) {
+            const pt = this._screenToSVG(e.clientX, e.clientY);
+            const dx = pt.x - this.resizeState.startX;
+            const { rect, side, origX, origWidth, g } = this.resizeState;
+            const MIN_NOTE_WIDTH = 60;
+
+            let newX     = origX;
+            let newWidth = origWidth;
+
+            if (side === 'right') {
+                // Drag right edge: only width changes, x stays
+                newWidth = Math.max(MIN_NOTE_WIDTH, origWidth + dx);
+            } else {
+                // Drag left edge: x moves right, width shrinks (or x moves left, width grows)
+                const proposed = origWidth - dx;
+                if (proposed >= MIN_NOTE_WIDTH) {
+                    newX     = origX + dx;
+                    newWidth = proposed;
+                } else {
+                    // Clamp to minimum: pin right edge
+                    newX     = origX + origWidth - MIN_NOTE_WIDTH;
+                    newWidth = MIN_NOTE_WIDTH;
+                }
+            }
+
+            // Check overlap with sibling note groups before applying
+            const wouldOverlap = this._checkNoteOverlap(g, newX, newWidth);
+            if (!wouldOverlap) {
+                rect.setAttribute('x', newX);
+                rect.setAttribute('width', newWidth);
+                this._repositionNoteContents(g, rect, newX, newWidth);
+                this._repositionHandles(g, rect, newX, newWidth);
+            }
+            return;
+        }
+
         if (this.dragState) {
             const pt = this._screenToSVG(e.clientX, e.clientY);
             const dx = pt.x - this.dragState.startX;
-            const dy = pt.y - this.dragState.startY;
+            let dy = pt.y - this.dragState.startY;
+
+            // Actor boxes: horizontal reposition only (lock Y)
+            const isActor = this.dragState.g.getAttribute('data-actor-group')?.startsWith('actor-');
+            if (isActor) dy = 0;
+
             const newTx = this.dragState.tx + dx;
-            const newTy = this.dragState.ty + dy;
+            const newTy = this.dragState.ty + (isActor ? 0 : dy);         
             this.dragState.g.setAttribute('transform', `translate(${newTx},${newTy})`);
             this.dragState.g.setAttribute('data-tx', newTx);
             this.dragState.g.setAttribute('data-ty', newTy);
@@ -534,14 +682,110 @@ class EnhancedMermaidEditor {
         }
     }
 
+    _repositionNoteContents(g, rect, newX, newWidth) {
+        const centerX = newX + newWidth / 2;
+        g.querySelectorAll('text').forEach(t => {
+            // Only reposition text that isn't a resize handle label
+            if (t.getAttribute('data-resize-handle')) return;
+            t.setAttribute('x', centerX);
+            t.querySelectorAll('tspan').forEach(ts => ts.setAttribute('x', centerX));
+        });
+    }
+
+    _repositionHandles(g, rect, newX, newWidth) {
+        if (!g._resizeHandles) return;
+        const rY = parseFloat(rect.getAttribute('y') || 0);
+        const rH = parseFloat(rect.getAttribute('height') || 30);
+
+        const lh = g._resizeHandles['left'];
+        const rh = g._resizeHandles['right'];
+
+        if (lh) { lh.setAttribute('x', newX - 4);              lh.setAttribute('y', rY); lh.setAttribute('height', rH); }
+        if (rh) { rh.setAttribute('x', newX + newWidth - 4);   rh.setAttribute('y', rY); rh.setAttribute('height', rH); }
+    }
+
+    _checkNoteOverlap(currentGroup, proposedX, proposedWidth) {
+        const proposedRight = proposedX + proposedWidth;
+        const allNoteGroups = Array.from(
+            this.svgEl.querySelectorAll('[data-actor-group^="note-"]')
+        );
+
+        return allNoteGroups.some(g => {
+            if (g === currentGroup) return false;
+            const r = g.querySelector('rect');
+            if (!r) return false;
+            const otherX     = parseFloat(r.getAttribute('x'));
+            const otherWidth = parseFloat(r.getAttribute('width'));
+            const otherRight = otherX + otherWidth;
+            const GAP = 4; // minimum gap between boxes in SVG units
+            // Overlap if proposed range intersects other range
+            return proposedX < otherRight + GAP && proposedRight > otherX - GAP;
+        });
+    }    
+
+    
+
+
     _onMouseUp(e) {
+        if (this.dragState) {
+            const g = this.dragState.g;
+            g.style.cursor = 'grab';
+            g.style.opacity = '1';
+
+            // If this was an actor box, reattach vertical lifeline
+            if (g._actorLines && g._actorLines.length > 0) {
+                const rect = g.querySelector('rect');
+                if (rect) {
+                    const rBBox = rect.getBoundingClientRect();
+                    const svgRect = this.svgEl.getBoundingClientRect();
+                    const viewBox = this.svgEl.viewBox.baseVal;
+                    const scaleX = viewBox.width / svgRect.width;
+                    const newCenterX = (rBBox.left + rBBox.width / 2 - svgRect.left) * scaleX;
+
+                    g._actorLines.forEach(line => {
+                        line.setAttribute('x1', newCenterX);
+                        line.setAttribute('x2', newCenterX);
+                    });
+                }
+            }
+
+            // Store position for external use
+            const tx = parseFloat(g.getAttribute('data-tx'));
+            const ty = parseFloat(g.getAttribute('data-ty'));
+            g.setAttribute('data-final-x', tx);
+            g.setAttribute('data-final-y', ty);
+
+            this.dragState = null;
+        }
         if (this.dragState) {
             this.dragState.g.style.cursor = 'grab';
             this.dragState.g.style.opacity = '1';
             this.dragState = null;
         }
-        if (this.lineDrag) this._finishLineDrag();
-        this.pendingLineDrag = null;
+    /*    if (this.lineDrag) this._finishLineDrag();
+        this.pendingLineDrag = null; */
+
+        if (window.qtBridge && window.qtBridge.onElementEdited) {
+            window.qtBridge.onElementEdited(
+                g.getAttribute('data-actor-group'),  // element_id
+                'actor',                              // element_type
+                '',                                   // new_text (empty = position update)
+                parseFloat(g.getAttribute('data-tx')),
+                parseFloat(g.getAttribute('data-ty'))
+            );
+        }
+        if (this.resizeState) {
+            this.resizeState.rect.style.outline = '';   // remove visual feedback
+            // Snap to nearest 10px grid (optional but clean)
+            const rect  = this.resizeState.rect;
+            const snapW = Math.round(parseFloat(rect.getAttribute('width'))  / 10) * 10;
+            const snapX = Math.round(parseFloat(rect.getAttribute('x'))      / 10) * 10;
+            rect.setAttribute('width', snapW);
+            rect.setAttribute('x',     snapX);
+            this._repositionNoteContents(this.resizeState.g, rect, snapX, snapW);
+            this._repositionHandles(this.resizeState.g, rect, snapX, snapW);
+            this.resizeState = null;
+        }
     }
 
     _onTouchEnd(e) {
@@ -1066,7 +1310,7 @@ class CodeEditorPanel(QWidget):
         hdr.addWidget(lbl)
         hdr.addStretch()
 
-        self.apply_btn = QPushButton("▶ Apply  Ctrl+↵")
+        self.apply_btn = QPushButton("▶ Apply  Ctrl+ENTER")
         self.apply_btn.setStyleSheet("""
             QPushButton {background:#2c5282;color:#fff;border:none;border-radius:4px;
                          padding:5px 12px;font-size:11px;font-weight:bold;}
