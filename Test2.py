@@ -1,5 +1,7 @@
 import sys
 import re
+
+from typer.cli import app
 from PySide6.QtWidgets import *
 from PySide6.QtCore import *
 from PySide6.QtGui import *
@@ -36,6 +38,13 @@ Schema:
   "language": "en|ja"
 }
 
+IMPORTANT language rule:
+- If the user writes in English → set "language": "en"
+- If the user writes in Japanese language in actual japanese latters → set "language": "ja"
+- Default to "en" if unsure
+
+
+
 Allowed component ids:
 supply, maincb, bus, nbar, ebar, outcb, loads
 """
@@ -67,6 +76,81 @@ supply, maincb, bus, nbar, ebar, outcb, loads
                 raise ValueError(f"No JSON found in model output:\n{text}")
             return json.loads(text[start:end])
         
+class ValidationWorker(QThread):
+    validationComplete = Signal(str, bool)  # message, has_issues
+
+    def __init__(self, prompt: str, mermaid_code: str, complexity: str = "Standard"):
+        super().__init__()
+        self.prompt = prompt
+        self.mermaid_code = mermaid_code
+        self.complexity = complexity
+
+
+    def run(self):
+        try:
+            complexity = self.complexity
+            complexity_context = {
+                "Simple": """COMPLEXITY: Simple mode is intentionally minimal.
+- Only Phase (L) wire is shown. Neutral and Earth wires are deliberately hidden.
+- No fault paths, no protection notes. This is expected and NOT a fault.
+- Only validate: supply → breaker → loads chain integrity.""",
+
+                "Standard": """COMPLEXITY: Standard mode shows L/N/E but has intentional omissions.
+- Fault protection paths are deliberately excluded. Do NOT flag missing fault paths.
+- Outgoing MCBs (branch breakers) are excluded. Do NOT flag their absence.
+- Validate: supply → breaker → busbar → neutral bar → earth bar → loads connectivity.""",
+
+                "Detailed": """COMPLEXITY: Detailed mode is the full diagram.
+- All components must be present: supply, main breaker, busbar, neutral bar, earth bar, outgoing MCBs, loads.
+- Fault protection paths MUST be present. Flag if missing.
+- Protection notes on the main breaker MUST be present. Flag if missing.
+- Validate everything strictly."""
+            }.get(complexity, "")
+
+            system_prompt = f"""You are an expert electrical diagram validator.
+You will receive:
+1. The user's original prompt
+2. The complexity level and what it intentionally omits
+3. The generated Mermaid sequence diagram code
+
+{complexity_context}
+
+Your job is to compare the user's intent against the Mermaid output and flag ONLY real problems:
+- Components the user explicitly asked for but are missing (accounting for complexity omissions above)
+- Logically incorrect electrical flow (e.g. load directly connected to supply with no breaker)
+- Components present that the user never asked for
+- In Detailed mode only: missing fault paths or protection notes
+
+Do NOT flag components that are intentionally hidden by the complexity level.
+
+Respond in this exact format:
+STATUS: OK or ISSUES_FOUND
+FINDINGS:
+- finding 1
+- finding 2
+(or write "None" if STATUS is OK)
+
+Be concise. Only flag real problems."""
+
+            payload = {
+                "model": "mistral:7b-instruct",
+                "prompt": f"{system_prompt.strip()}\n\nUSER PROMPT:\n{self.prompt}\n\nMERMAID CODE:\n{self.mermaid_code}",
+                "stream": False,
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": 512,
+                    "num_ctx": 4096,
+                }
+            }
+            response = requests.post("http://localhost:11434/api/generate", json=payload, timeout=60)
+            response.raise_for_status()
+            text = response.json().get("response", "").strip()
+            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
+            has_issues = "ISSUES_FOUND" in text
+            self.validationComplete.emit(text, has_issues)
+        except Exception as e:
+            self.validationComplete.emit(f"Validation unavailable: {e}", False)
 
 class WebBridge(QObject):
     elementDoubleClicked = Signal(str, str, str)
@@ -131,34 +215,147 @@ class MermaidGenerator:
             "load circuits": {"en": "Load Circuits<br/>(Lights, Sockets)", "ja": "負荷回路<br/>(照明、コンセント)"},
         }
         self.keywords_map = {
-            "incoming": {"en": ["incoming", "supply", "source", "230v", "415v"], "ja": ["主電源", "受電", "電源", "入力電源"]},
-            "breaker": {"en": ["breaker", "mcb", "mccb", "protection"], "ja": ["遮断器", "ブレーカー", "ブレーカ"]},
-            "busbar": {"en": ["busbar", "distribution", "panel"], "ja": ["母線", "バスバー", "配電盤", "分電盤"]},
-            "neutral": {"en": ["neutral", "return"], "ja": ["中性線", "ニュートラル", "零線", "N線"]},
-            "earth": {"en": ["earth", "ground", "safety"], "ja": ["接地", "アース", "グラウンド", "地線"]},
-            "outgoing": {"en": ["outgoing", "branch", "circuit"], "ja": ["出力", "分岐", "回路"]},
-            "load": {"en": ["load", "circuit", "light", "socket", "appliance"], "ja": ["負荷", "回路", "照明", "コンセント"]},
+            "incoming": {
+                "en": [
+                    "incoming", "supply", "source", "230v", "415v",
+                    # voltage patterns
+                    "mains", "grid", "utility", "infeed", "line in",
+                    # three-phase variants
+                    "three-phase", "3-phase", "three phase", "3phase",
+                    "ryb", "ryw", "rst", "uvw",            # phase naming conventions
+                    "single-phase", "1-phase", "single phase",
+                ],
+                "ja": [
+                    "主電源", "受電", "電源", "入力電源",
+                    "三相", "単相", "系統",
+                ],
+            },            
+            "breaker": {
+                "en": [
+                    "breaker", "mcb", "mccb", "protection",
+                    # common shorthand / typos the LLM or users write
+                    "circuit breaker", "main cb", "main breaker",
+                    "isolator", "isolating switch", "main switch",
+                    "rcd", "rcbo", "elcb",                 # residual current variants
+                    "fuse", "fuse switch", "switch fuse",
+                    "acb",                                  # air circuit breaker
+                    "vcb",                                  # vacuum circuit breaker
+                    "contactor",
+                ],
+                "ja": [
+                    "遮断器", "ブレーカー", "ブレーカ",
+                    "主開閉器", "漏電遮断器", "配線用遮断器",
+                    "ヒューズ", "開閉器",
+                ],
+            },
+            "busbar": {
+                "en": [
+                    "busbar", "distribution", "panel",
+                    "bus bar", "bus-bar", "copper bar", "copper strip",
+                    "db", "distribution board", "distribution box",
+                    "switchboard", "switchgear", "mdb",    # main distribution board
+                    "pcc",                                  # power control centre
+                    "mcc",                                  # motor control centre
+                ],
+                "ja": [
+                    "母線", "バスバー", "配電盤", "分電盤",
+                    "銅バー", "主幹", "盤",
+                ],
+            },            
+            
+            "neutral": {
+                "en": [
+                    "neutral", "return",
+                    "neutral bar", "n bar", "n-bar",
+                    "neutral link", "neutral terminal",
+                    "neutral bus", "common neutral",
+                    "neutral return", "return path",
+                    # three-phase star point terms
+                    "star point", "centre point",
+                ],
+                "ja": [
+                    "中性線", "ニュートラル", "零線", "N線",
+                    "中性点", "中性線バー",
+                ],
+            },            
+            "earth": {
+                "en": [
+                    "earth", "ground", "safety",
+                    "earth bar", "e bar", "e-bar",
+                    "earthing", "grounding",
+                    "protective earth", "pe",
+                    "cpc",                                  # circuit protective conductor
+                    "bonding", "equipotential bonding",
+                    "earth terminal", "earth bus",
+                    "chassis earth", "frame earth",
+                ],
+                "ja": [
+                    "接地", "アース", "グラウンド", "地線",
+                    "保護接地", "接地バー", "PE線",
+                ],
+            }, 
+
+            "outgoing": {
+                "en": [
+                    "outgoing", "branch", "circuit",
+                    "sub breaker", "sub-breaker", "sub mcb",
+                    "outgoing mcb", "outgoing breaker",
+                    "final circuit", "branch circuit",
+                    "feeder", "sub feeder",
+                    "downstream breaker", "individual breaker",
+                    "motor breaker", "lighting breaker",
+                ],
+                "ja": [
+                    "出力", "分岐", "回路",
+                    "分岐ブレーカー", "出力MCB", "子ブレーカー",
+                ],
+            },
+
+           
+            "load": {
+                "en": [
+                    "load", "circuit", "light", "socket", "appliance",
+                    # common load descriptions users write
+                    "lighting", "lights", "lamps", "luminaire",
+                    "power socket", "outlet", "plug point",
+                    "motor", "pump", "fan", "hvac", "air conditioning",
+                    "equipment", "machine", "device", "consumer",
+                    "balanced load", "unbalanced load",
+                    "three-phase load", "single-phase load",
+                ],
+                "ja": [
+                    "負荷", "回路", "照明", "コンセント",
+                    "モーター", "ポンプ", "機器", "電気機器",
+                ],
+            },
         }
         self.diagram_labels = {
-            "section_incoming": {"en": "Incoming Source", "ja": "入力電源"},
-            "section_distribution": {"en": "Distribution Panel Components", "ja": "分電盤部品"},
-            "section_load": {"en": "Load Side", "ja": "負荷側"},
-            "note_power_entry": {"en": "1. INCOMING POWER ENTRY", "ja": "1. 受電"},
-            "note_internal": {"en": "2. INTERNAL DISTRIBUTION", "ja": "2. 内部配電"},
-            "note_outgoing": {"en": "3. OUTGOING CIRCUITS", "ja": "3. 出力回路"},
-            "wire_phase": {"en": "Phase/Line Wire (L)", "ja": "相線/ラインワイヤ (L)"},
-            "wire_neutral": {"en": "Neutral Wire (N)", "ja": "中性線 (N)"},
-            "wire_earth": {"en": "Earth Wire (E)", "ja": "接地線 (E)"},
-            "action_energize": {"en": "Energize Busbar (L)", "ja": "母線を励磁 (L)"},
-            "action_protection": {"en": "Protection: Overload/Short", "ja": "保護: 過負荷/短絡"},
-            "action_distribute": {"en": "Distribute to Branch Breakers", "ja": "分岐ブレーカーに配電"},
-            "action_feed": {"en": "Line (L) - Protected Feed", "ja": "ライン (L) - 保護給電"},
-            "action_return": {"en": "Neutral (N) - Return Path", "ja": "中性線 (N) - 帰路"},
-            "action_safety": {"en": "Earth (E) - Safety Grounding", "ja": "接地 (E) - 安全接地"},
-            "action_fault": {"en": "Fault Path (E) - Trip Signal", "ja": "故障経路 (E) - トリップ信号"},
-            "note_fault": {"en": "FAULT PROTECTION PATHS", "ja": "故障保護経路"},
-        }
+            # ── Box / Section headers ─────────────────────────────────────────
+            "section_incoming":     {"en": "Incoming Source",                "ja": "入力電源"},
+            "section_distribution": {"en": "Distribution Panel Components",  "ja": "分電盤部品"},
+            "section_load":         {"en": "Load Side",                      "ja": "負荷側"},
 
+            # ── Section note banners ──────────────────────────────────────────
+            "note_power_entry": {"en": "1. INCOMING POWER ENTRY",   "ja": "1. 受電"},
+            "note_internal":    {"en": "2. INTERNAL DISTRIBUTION",  "ja": "2. 内部配電"},
+            "note_outgoing":    {"en": "3. OUTGOING CIRCUITS",      "ja": "3. 出力回路"},
+            "note_fault":       {"en": "FAULT PROTECTION PATHS",    "ja": "故障保護経路"},
+
+            # ── Wire / conductor arrow labels ─────────────────────────────────
+            "wire_phase":   {"en": "Phase/Line Wire (L)",  "ja": "相線/ラインワイヤ (L)"},
+            "wire_neutral": {"en": "Neutral Wire (N)",     "ja": "中性線 (N)"},
+            "wire_earth":   {"en": "Earth Wire (E)",       "ja": "接地線 (E)"},
+
+            # ── Action arrow labels ───────────────────────────────────────────
+            "action_energize":   {"en": "Energize Busbar (L)",            "ja": "母線を励磁 (L)"},
+            "action_protection": {"en": "Protection: Overload/Short",     "ja": "保護: 過負荷/短絡"},
+            "action_distribute": {"en": "Distribute to Branch Breakers",  "ja": "分岐ブレーカーに配電"},
+            "action_feed":       {"en": "Line (L) - Protected Feed",      "ja": "ライン (L) - 保護給電"},
+            "action_return":     {"en": "Neutral (N) - Return Path",      "ja": "中性線 (N) - 帰路"},
+            "action_safety":     {"en": "Earth (E) - Safety Grounding",   "ja": "接地 (E) - 安全接地"},
+            "action_fault":      {"en": "Fault Path (E) - Trip Signal",   "ja": "故障経路 (E) - トリップ信号"},
+        }
+        
     def detect_language(self, text):
         if re.compile(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]').search(text):
             return "ja"
@@ -1350,6 +1547,72 @@ class CodeEditorPanel(QWidget):
         self.codeChanged.emit(self.get_code())
 
 
+
+class ValidationPanel(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build_ui()
+        self.hide()
+
+    def _build_ui(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(4)
+
+        header = QHBoxLayout()
+        self.icon_lbl = QLabel("🔍")
+        self.title_lbl = QLabel("Validating diagram…")
+        self.title_lbl.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        header.addWidget(self.icon_lbl)
+        header.addWidget(self.title_lbl)
+        header.addStretch()
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setFixedSize(20, 20)
+        self.close_btn.setStyleSheet("border:none; color:#718096; font-size:12px;")
+        self.close_btn.clicked.connect(self.hide)
+        header.addWidget(self.close_btn)
+        lay.addLayout(header)
+
+        self.findings_lbl = QLabel("")
+        self.findings_lbl.setWordWrap(True)
+        self.findings_lbl.setFont(QFont("Arial", 9))
+        lay.addWidget(self.findings_lbl)
+
+        self.setStyleSheet("""
+            ValidationPanel {
+                border: 1px solid #fed7aa;
+                border-radius: 6px;
+                background: #fff7ed;
+            }
+        """)
+        self.setMaximumHeight(120)
+
+    def show_loading(self):
+        self.setStyleSheet("ValidationPanel{border:1px solid #bee3f8;border-radius:6px;background:#ebf8ff;}")
+        self.icon_lbl.setText("🔍")
+        self.title_lbl.setText("Validating diagram against prompt…")
+        self.findings_lbl.setText("")
+        self.show()
+
+    def show_result(self, text: str, has_issues: bool):
+        if has_issues:
+            self.setStyleSheet("ValidationPanel{border:1px solid #feb2b2;border-radius:6px;background:#fff5f5;}")
+            self.icon_lbl.setText("⚠️")
+            self.title_lbl.setText("Potential issues found")
+            self.title_lbl.setStyleSheet("color:#c53030;")
+        else:
+            self.setStyleSheet("ValidationPanel{border:1px solid #9ae6b4;border-radius:6px;background:#f0fff4;}")
+            self.icon_lbl.setText("✅")
+            self.title_lbl.setText("Diagram looks good")
+            self.title_lbl.setStyleSheet("color:#276749;")
+
+        findings = ""
+        if "FINDINGS:" in text:
+            findings = text.split("FINDINGS:")[-1].strip()
+        self.findings_lbl.setText(findings if findings and findings != "None" else "")
+        self.show()
+
+
 class DiagramCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1363,6 +1626,8 @@ class DiagramCanvas(QWidget):
         self._setup_channel()
         self.web_bridge.elementEdited.connect(self._on_element_edited)
         self.web_bridge.diagramChanged.connect(self._on_diagram_text_changed)
+        self._last_prompt = ""
+        self._validation_worker = None
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
@@ -1373,6 +1638,8 @@ class DiagramCanvas(QWidget):
         self.web_view.setMinimumHeight(500)
         self.web_bridge.elementDoubleClicked.connect(self._on_element_dblclicked)
         lay.addWidget(self.web_view)
+        self.validation_panel = ValidationPanel()
+        lay.addWidget(self.validation_panel)
 
         # Stub: code panel lives inside the WebView HTML now
         self.code_panel = type('_Stub', (), {
@@ -1384,6 +1651,13 @@ class DiagramCanvas(QWidget):
         ch = QWebChannel(self.web_view.page())
         ch.registerObject("qtBridge", self.web_bridge)
         self.web_view.page().setWebChannel(ch)
+
+    def closeEvent(self, event):
+        if self._validation_worker is not None and self._validation_worker.isRunning():
+            self._validation_worker.quit()
+            self._validation_worker.wait(5000)
+
+        super().closeEvent(event)
 
     def generate_from_prompt(self, prompt_text, complexity_level="Standard"):
         try:
@@ -1398,6 +1672,16 @@ class DiagramCanvas(QWidget):
             try:
                 ollama = OllamaClient()
                 parsed_data = ollama.prompt_to_structured_data(prompt_text)
+                # After parsing from Ollama, ensure 'loads' is present if the prompt mentions loads
+                load_hints = ["load", "circuit", "light", "socket", "appliance", "consumer", "outlet"]
+                if "loads" not in [c for c, _ in parsed_data["components"]]:
+                    if any(hint in prompt_text.lower() for hint in load_hints):
+                        allowed_ids = COMPLEXITY_LEVELS[complexity_level]["components"]
+                        if "loads" in allowed_ids:
+                            lang = parsed_data.get("language", "en")
+                            lbl = self.generator.components_map["load circuits"][lang]
+                            parsed_data["components"].append(("loads", lbl))
+
                 if not isinstance(parsed_data, dict) or "components" not in parsed_data:
                     raise ValueError("Invalid LLM output")
                 allowed_ids = COMPLEXITY_LEVELS[complexity_level]["components"]
@@ -1405,6 +1689,11 @@ class DiagramCanvas(QWidget):
                     (c, l) for c, l in parsed_data["components"] if c in allowed_ids
                 ]
                 parsed_data["complexity"] = complexity_level
+                # Trust explicit language from LLM; only fallback to detection if missing
+                # if "language" not in parsed_data or parsed_data["language"] not in ("en", "ja"):
+                
+                parsed_data["language"] = self.generator.detect_language(prompt_text)
+                    
                 print("DEBUG: Parsed via Ollama")
             except Exception as llm_err:
                 print(f"LLM parsing failed, using regex fallback: {llm_err}")
@@ -1428,7 +1717,11 @@ class DiagramCanvas(QWidget):
                     f"Diagram generated ({lang_name}, {complexity_level}), "
                     f"{len(parsed_data.get('components', []))} components. "
                     "Drag boxes · Double-click text · Edit code below.", 6000)
+                # ── Step 3: Async validation ───────────────────────────────────────
+                self._last_prompt = prompt_text
+                self._run_validation(prompt_text, mermaid_code)
             return True
+
         except Exception as e:
             import traceback; traceback.print_exc()
             QMessageBox.critical(self, "Generation Error", f"Failed to generate diagram:\n\n{str(e)}")
@@ -1485,6 +1778,25 @@ class DiagramCanvas(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Refresh Error", str(e))
 
+    def _run_validation(self, prompt: str, mermaid_code: str):
+        self.validation_panel.show_loading()
+
+        # Properly stop the old worker before replacing it
+        if self._validation_worker is not None:
+            if self._validation_worker.isRunning():
+                self._validation_worker.requestInterruption()  # signal it to stop
+                self._validation_worker.quit()
+                self._validation_worker.wait(3000)             # wait up to 3s for it to finish
+            self._validation_worker.deleteLater()
+            self._validation_worker = None
+
+        complexity = self.current_parsed_data.get("complexity", "Standard") \
+                    if self.current_parsed_data else "Standard"
+
+        self._validation_worker = ValidationWorker(prompt, mermaid_code, complexity)  # ← pass complexity
+        self._validation_worker.validationComplete.connect(self.validation_panel.show_result)
+        self._validation_worker.start()
+    
     def _on_element_edited(self, element_id, element_type, new_text, x, y):
         self._update_parsed_data(element_id, element_type, new_text)
         self.refresh_diagram()
@@ -1888,6 +2200,8 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_ui()
         self.installEventFilter(self)
+        # In MainWindow.__init__ or wherever you set up the app:
+        # app.aboutToQuit.connect(self.canvas.closeEvent)
 
     def _build_menu(self):
         mb = self.menuBar()
