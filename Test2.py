@@ -1093,8 +1093,8 @@ class EnhancedMermaidEditor {
         input.value = current;
         Object.assign(input.style, {
             position: 'fixed',
-            left: (rect.left + window.scrollX) + 'px',
-            top: (rect.top + window.scrollY) + 'px',
+            left: rect.left + 'px',
+            top: rect.top + 'px',
             width: Math.max(rect.width + 24, 160) + 'px',
             height: rect.height + 10 + 'px',
             zIndex: '10000',
@@ -1418,7 +1418,7 @@ body {{
         <p>{key['generated']} <span class="voltage-pill">⚡ {voltage}</span></p>
     </div>
     <div class="tip-bar">{key['tip']}</div>
-    <div class="mermaid-wrap">
+    <div class="mermaid-wrap" id="diagram-root">
         <div id="mermaid-container">
             <div class="mermaid">
 {mermaid_code}
@@ -2030,6 +2030,27 @@ class Sidebar(QWidget):
         lay.setSpacing(10)
         lay.setContentsMargins(12, 12, 12, 12)
 
+        self._collapsed = False
+        self._toggle_btn = QPushButton("◀ Hide")
+        self._toggle_btn.setFixedHeight(24)
+        self._toggle_btn.setStyleSheet(
+            "QPushButton{background:#cbd5e0;border:none;border-radius:4px;"
+            "font-size:11px;font-weight:bold;color:#2d3748;}"
+            "QPushButton:hover{background:#a0aec0;}"
+        )
+        self._toggle_btn.clicked.connect(self._toggle_collapse)
+        lay.addWidget(self._toggle_btn)
+
+        self._content = QWidget()
+        content_lay = QVBoxLayout(self._content)
+        content_lay.setSpacing(10)
+        content_lay.setContentsMargins(0, 0, 0, 0)
+
+        lay.addWidget(self._content)
+        self.setMinimumWidth(280)
+        self.setMaximumWidth(340)
+
+
         title = QLabel("Electrical Diagram Generator")
         title.setFont(QFont("Arial", 13, QFont.Weight.Bold))
         title.setStyleSheet("color:#2c5282; margin-bottom:8px;")
@@ -2139,6 +2160,19 @@ class Sidebar(QWidget):
         self.setStyleSheet("QWidget{background:#f7fafc;border-right:1px solid #e2e8f0;} QLabel{color:#2d3748;}")
 
         self._update_complexity_style("Standard")
+
+
+    def _toggle_collapse(self):
+        self._collapsed = not self._collapsed
+        self._content.setVisible(not self._collapsed)
+        if self._collapsed:
+            self.setFixedWidth(32)
+            self._toggle_btn.setText("▶")
+        else:
+            self.setMinimumWidth(280)
+            self.setMaximumWidth(340)
+            self.setFixedWidth(QWIDGETSIZE_MAX)   # clear fixed width
+            self._toggle_btn.setText("◀ Hide")
 
     def _on_complexity_changed(self, level: str):
         self.complexity_hint.setText(COMPLEXITY_LEVELS[level]["description"])
@@ -2304,18 +2338,6 @@ class MainWindow(QMainWindow):
                 json.dump(data, f, ensure_ascii=False, indent=2)
             self.status.showMessage(f"Saved to {path}", 3000)
 
-    # ── Export actions ────────────────────────────────────────────────────────
-
-    # def export_as_png(self):
-    #     if not self._require_diagram(): return
-    #     path, _ = QFileDialog.getSaveFileName(self, "Export PNG (full page)", "", "PNG Files (*.png)")
-    #     if not path: return
-    #     self.status.showMessage("⏳ Preparing full diagram export…", 0)
-    #     self.canvas.export_full_png(path, on_done=lambda ok, msg: (
-    #         self.status.showMessage(msg, 4000),
-    #         QMessageBox.information(self, "Exported", msg) if ok
-    #         else QMessageBox.critical(self, "Export Error", msg)
-    #     ))
 
     def export_as_png(self):
         if not self._require_diagram(): return
@@ -2451,18 +2473,25 @@ class MainWindow(QMainWindow):
 
     def reset_zoom(self):
         self.canvas.web_view.page().runJavaScript("""
-            document.getElementById('diagram-root').style.transform = 'scale(1)';
+            (function() {
+                var el = document.getElementById('diagram-root');
+                if (!el) return;
+                el.dataset.scale = '1';
+                el.style.transform = 'scale(1)';
+                el.style.transformOrigin = 'top left';
+            })();
         """)
 
     def _scale_diagram(self, factor):
         self.canvas.web_view.page().runJavaScript(f"""
             (function() {{
-                const el = document.getElementById('diagram-root');
-                const current = el.dataset.scale ? parseFloat(el.dataset.scale) : 1;
-                const next = current * {factor};
+                var el = document.getElementById('diagram-root');
+                if (!el) return;
+                var current = el.dataset.scale ? parseFloat(el.dataset.scale) : 1.0;
+                var next = Math.min(Math.max(current * {factor}, 0.2), 5.0);
                 el.dataset.scale = next;
-                el.style.transform = `scale(${{next}})`;
-                el.style.transformOrigin = 'center center';
+                el.style.transform = 'scale(' + next + ')';
+                el.style.transformOrigin = 'top left';
             }})();
         """)
 
