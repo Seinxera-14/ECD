@@ -4,14 +4,15 @@ from PySide6.QtWidgets import *
 from PySide6.QtCore import *
 from PySide6.QtWebEngineWidgets import *
 from PySide6.QtWebChannel import *
-from PySide6.QtWebEngineCore import QWebEngineSettings
+# from PySide6.QtWebEngineCore import QWebEngineSettings
+import os
 
 from mermaid_generator import MermaidGenerator
 from ollama_client import OllamaClient
 from web_bridge import WebBridge
 from element_editor import ElementEditorDialog
 from constants import COMPLEXITY_LEVELS
-
+from ValidationWorker import ValidationWorker, ValidationPanel
 
 class DiagramCanvas(QWidget):
     def __init__(self, parent=None):
@@ -22,13 +23,12 @@ class DiagramCanvas(QWidget):
         self.original_parsed_data = None
         self.web_bridge = WebBridge()
         self._current_mermaid_code = ""
-        self._svg_export_path = None
-        self._svg_export_on_done = None
-        self._export_orig_size = None
         self._build_ui()
         self._setup_channel()
         self.web_bridge.elementEdited.connect(self._on_element_edited)
         self.web_bridge.diagramChanged.connect(self._on_diagram_text_changed)
+        self._last_prompt = ""
+        self._validation_worker = None
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
@@ -37,20 +37,10 @@ class DiagramCanvas(QWidget):
 
         self.web_view = QWebEngineView()
         self.web_view.setMinimumHeight(500)
-
-        # Enable JavaScript console for debugging
-        self.web_view.page().settings().setAttribute(
-            QWebEngineSettings.WebAttribute.JavascriptEnabled, True
-        )
-        self.web_view.page().settings().setAttribute(
-            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
-        )
-
         self.web_bridge.elementDoubleClicked.connect(self._on_element_dblclicked)
         lay.addWidget(self.web_view)
-
-        
-        
+        self.validation_panel = ValidationPanel()
+        lay.addWidget(self.validation_panel)
 
         # Stub: code panel lives inside the WebView HTML now
         self.code_panel = type('_Stub', (), {
@@ -63,7 +53,14 @@ class DiagramCanvas(QWidget):
         ch.registerObject("qtBridge", self.web_bridge)
         self.web_view.page().setWebChannel(ch)
 
-    def generate_from_prompt(self, prompt_text, complexity_level="Standard"):
+    def closeEvent(self, event):
+        if self._validation_worker is not None and self._validation_worker.isRunning():
+            self._validation_worker.quit()
+            self._validation_worker.wait(5000)
+
+        super().closeEvent(event)
+
+    def generate_from_prompt(self, prompt_text, complexity_level="Neutral"):
         try:
             prompt_text = prompt_text.strip()
             if not prompt_text:
@@ -72,45 +69,75 @@ class DiagramCanvas(QWidget):
 
             parsed_data = None
 
-            # ── Step 1: Parse prompt into structured data ──────────────────────
+            # ── Step 1: Parse prompt via LLM ──────────────────────────────────────
             try:
                 ollama = OllamaClient()
-                parsed_data = ollama.prompt_to_structured_data(prompt_text)
+                parsed_data = ollama.prompt_to_structured_data(prompt_text, complexity_level)
+
                 if not isinstance(parsed_data, dict) or "components" not in parsed_data:
-                    raise ValueError("Invalid LLM output")
-                allowed_ids = COMPLEXITY_LEVELS[complexity_level]["components"]
-                parsed_data["components"] = [
-                    (c, l) for c, l in parsed_data["components"] if c in allowed_ids
-                ]
+                    raise ValueError("Invalid LLM output — missing components key")
+
+                # ── Hard safety minimum: supply and maincb must always exist ──────
+                comp_ids = [c for c, _ in parsed_data["components"]]
+                lang = parsed_data.get("language", "en")
+                voltage = parsed_data.get("voltage", "230V / 415V")
+                if "supply" not in comp_ids:
+                    parsed_data["components"].insert(0, (
+                        "supply",
+                        self.generator.components_map["main incoming supply"][lang].replace("230V / 415V", voltage)
+                    ))
+                if "maincb" not in comp_ids:
+                    parsed_data["components"].insert(1, (
+                        "maincb",
+                        self.generator.components_map["main breaker"][lang]
+                    ))
+
+                # ── For Neutral mode: strip anything not in the LLM output ────────
+                # For other modes: also strip components not allowed by that level,
+                # EXCEPT when explicitly present in LLM output (prompt wins).
+                if complexity_level != "Neutral":
+                    allowed_ids = set(COMPLEXITY_LEVELS[complexity_level]["components"])
+                    allow_outcb = any(c.startswith("outcb") for c in allowed_ids)
+                    # Keep component if: in allowed set, OR it's an outcb_N and level allows outcb
+                    parsed_data["components"] = [
+                        (c, l) for c, l in parsed_data["components"]
+                        if c in allowed_ids or (allow_outcb and c.startswith("outcb_"))
+                    ]
+
                 parsed_data["complexity"] = complexity_level
-                print("DEBUG: Parsed via Ollama")
+                # After line 1881 (parsed_data["complexity"] = complexity_level)
+                parsed_data["prompt"] = prompt_text    # ← store original prompt for generator to read
+                parsed_data["language"] = self.generator.detect_language(prompt_text)
+                print(f"Parsed via LLM ")
+
             except Exception as llm_err:
+            
                 print(f"LLM parsing failed, using regex fallback: {llm_err}")
                 parsed_data = self.generator.parse_prompt(prompt_text, complexity_level)
 
             self.current_parsed_data = parsed_data
             self.original_parsed_data = parsed_data.copy()
 
-            # ── Step 2: Generate Mermaid code ──────────────────────────────────
+            # ── Step 2: Generate Mermaid code ─────────────────────────────────────
             mermaid_code = self.generator.generate_mermaid_code(parsed_data)
-
             self._current_mermaid_code = mermaid_code
             self.code_panel.set_code(mermaid_code)
 
             html = self.generator.generate_display_html(mermaid_code, parsed_data, enable_editing=True)
-            # Debug: print first 500 chars of HTML to check
-            print("DEBUG: HTML length:", len(html))
-            print("DEBUG: HTML preview:", html[:500])
-            print("DEBUG: Mermaid code:", mermaid_code[:200])
-            self.web_view.setHtml(html, QUrl("")) 
+            self.web_view.setHtml(html)
 
             if self.parent_window and hasattr(self.parent_window, 'status'):
                 lang_name = "English" if parsed_data.get("language") == "en" else "Japanese"
                 self.parent_window.status.showMessage(
                     f"Diagram generated ({lang_name}, {complexity_level}), "
                     f"{len(parsed_data.get('components', []))} components. "
-                    "Drag blue boxes · Double-click text · Edit code below.", 6000)
+                    "Drag boxes · Double-click text · Edit code below.", 6000)
+
+            # ── Step 3: Async validation ───────────────────────────────────────────
+            self._last_prompt = prompt_text
+            self._run_validation(prompt_text, mermaid_code)
             return True
+
         except Exception as e:
             import traceback; traceback.print_exc()
             QMessageBox.critical(self, "Generation Error", f"Failed to generate diagram:\n\n{str(e)}")
@@ -120,9 +147,23 @@ class DiagramCanvas(QWidget):
         self._current_mermaid_code = new_code
         self.code_panel.set_code(new_code)
 
+    def _on_qt_code_changed(self, new_code: str):
+        self._current_mermaid_code = new_code
+        escaped = new_code.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
+        js = f"""
+(function() {{
+    var ta = document.getElementById('mermaid-code-editor');
+    if (ta) ta.value = `{escaped}`;
+    if (typeof applyCodeToDiagram === 'function') applyCodeToDiagram();
+}})();
+"""
+        self.web_view.page().runJavaScript(js, 0)
+        if self.parent_window and hasattr(self.parent_window, 'status'):
+            self.parent_window.status.showMessage("✓ Diagram updated from code", 2000)
+
     def _on_element_dblclicked(self, element_id, element_type, current_text):
         dlg = ElementEditorDialog(element_id, element_type, current_text, self)
-        if dlg.exec() == ElementEditorDialog.DialogCode.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             new_text = dlg.get_new_text()
             self._update_parsed_data(element_id, element_type, new_text)
             self.refresh_diagram()
@@ -153,6 +194,88 @@ class DiagramCanvas(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Refresh Error", str(e))
 
+    def _run_validation(self, prompt: str, mermaid_code: str):
+        self.validation_panel.show_loading()
+
+        # Properly stop the old worker before replacing it
+        if self._validation_worker is not None:
+            if self._validation_worker.isRunning():
+                self._validation_worker.requestInterruption()  # signal it to stop
+                self._validation_worker.quit()
+                self._validation_worker.wait(3000)             # wait up to 3s for it to finish
+            self._validation_worker.deleteLater()
+            self._validation_worker = None
+
+        complexity = self.current_parsed_data.get("complexity", "Standard") \
+                    if self.current_parsed_data else "Standard"
+
+        self._validation_worker = ValidationWorker(prompt, mermaid_code, complexity)  # ← pass complexity
+        self._validation_worker.validationComplete.connect(self.validation_panel.show_result)
+        self._validation_worker.findingsReady.connect(self._on_validation_issues_found)   
+        self._validation_worker.start()
+
+
+    def _on_validation_issues_found(self, findings: list):
+        """Attempt to patch parsed_data based on validation findings, then regenerate."""
+        if not self.current_parsed_data:
+            return
+
+        pd = self.current_parsed_data
+        comp_map = dict(pd["components"])
+        complexity = pd.get("complexity", "Standard")
+        lang = pd.get("language", "en")
+        voltage = pd.get("voltage", "230V / 415V")
+        changed = False
+
+        COMPONENT_KEYWORDS = {
+            "rcd":   ["rcd", "rcbo", "residual", "earth fault"],
+            "bus":   ["busbar", "bus"],
+            "nbar":  ["neutral bar", "neutral"],
+            "ebar":  ["earth bar", "earth"],
+            "maincb":["main breaker", "main cb", "circuit breaker"],
+            "supply":["supply", "source"],
+        }
+
+        for finding in findings:
+            finding_lower = finding.lower()
+            for cid, keywords in COMPONENT_KEYWORDS.items():
+                if any(kw in finding_lower for kw in keywords):
+                    if ("missing" in finding_lower or "absent" in finding_lower or
+                            "not present" in finding_lower or "should" in finding_lower):
+                        if cid not in comp_map:
+                            label = self.generator.components_map.get(
+                                {"rcd": "rcd", "bus": "busbar", "nbar": "neutral bar",
+                                "ebar": "earth bar", "maincb": "main breaker",
+                                "supply": "main incoming supply"}.get(cid, cid),
+                                {}
+                            ).get(lang, cid.upper())
+                            comp_map[cid] = label
+                            changed = True
+
+        if not changed:
+            return
+
+        # Rebuild ordered component list respecting standard order
+        ORDER = ["supply", "maincb", "rcd", "rcbo", "bus", "nbar", "ebar",
+                "outcb_1", "outcb_2", "outcb_3", "outcb_4", "outcb_5", "loads"]
+        existing_extras = [(c, l) for c, l in pd["components"] if c not in comp_map]
+        merged = [(c, comp_map[c]) for c in ORDER if c in comp_map] + existing_extras
+
+        pd["components"] = merged
+
+        # Regenerate and redisplay without re-calling the LLM
+        try:
+            new_code = self.generator.generate_mermaid_code(pd)
+            self._current_mermaid_code = new_code
+            self.code_panel.set_code(new_code)
+            html = self.generator.generate_display_html(new_code, pd, enable_editing=True)
+            self.web_view.setHtml(html)
+            if self.parent_window and hasattr(self.parent_window, 'status'):
+                self.parent_window.status.showMessage(
+                    "⚠ Diagram auto-corrected based on validation findings", 5000)
+        except Exception as e:
+            print(f"Auto-correction regeneration failed: {e}")
+    
     def _on_element_edited(self, element_id, element_type, new_text, x, y):
         self._update_parsed_data(element_id, element_type, new_text)
         self.refresh_diagram()
@@ -171,9 +294,13 @@ class DiagramCanvas(QWidget):
             var svg = document.querySelector('.mermaid svg');
             if (!svg) return JSON.stringify({error: 'No SVG found'});
 
+            // Clone so we don't mutate the live DOM
             var clone = svg.cloneNode(true);
+
+            // Ensure white background
             clone.style.background = '#ffffff';
 
+            // Fix any currentColor text fills
             clone.querySelectorAll('text, tspan').forEach(function(el) {
                 var f = el.getAttribute('fill');
                 if (!f || f === 'currentColor' || f === 'inherit' ||
@@ -182,6 +309,7 @@ class DiagramCanvas(QWidget):
                 }
             });
 
+            // Add XML namespace if missing
             clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
             clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
 
@@ -215,6 +343,7 @@ class DiagramCanvas(QWidget):
     # ── PDF Export ────────────────────────────────────────────────────────────
     def export_pdf(self, file_path: str, on_done=None):
         """Print the diagram page to a PDF using Qt's built-in PDF printing."""
+        # Use QPageLayout for PDF output
         page_layout = QPageLayout(
             QPageSize(QPageSize.PageSizeId.A4),
             QPageLayout.Orientation.Landscape,
@@ -222,24 +351,27 @@ class DiagramCanvas(QWidget):
             QPageLayout.Unit.Millimeter
         )
 
-        def _on_pdf_done(success):
-            if on_done:
-                if success:
+        def _on_pdf_done(file_path_result):
+            # Qt returns the path on success, empty string on failure
+            if file_path_result:
+                if on_done:
                     on_done(True, f"✓ PDF saved to {file_path}")
-                else:
+            else:
+                if on_done:
                     on_done(False, "PDF export failed")
 
-        self.web_view.page().pdfPrintingFinished.connect(
-            lambda path, success: on_done(True, f"✓ PDF saved to {file_path}") if success and on_done 
-            else (on_done(False, "PDF export failed") if on_done else None)
-        )
         self.web_view.page().printToPdf(file_path, page_layout)
+        # printToPdf is async; connect to the signal for completion notification
+        self.web_view.page().pdfPrintingFinished.connect(
+            lambda path, success: on_done(success, f"✓ PDF saved to {file_path}" if success else "PDF export failed")
+            if on_done else None
+        )
 
-    # ── SVG-only PNG Export ───────────────────────────────────────────────────
+    # ── SVG-only PNG Export (diagram only, no UI chrome) ─────────────────────
     def export_svg_as_png(self, file_path: str, on_done=None):
-        self._svg_export_path = file_path
+        self._svg_export_path    = file_path
         self._svg_export_on_done = on_done
-        self._export_orig_size = self.web_view.size()
+        self._export_orig_size   = self.web_view.size()
 
         js_prepare = """
         (function() {
@@ -317,9 +449,9 @@ class DiagramCanvas(QWidget):
     def _grab_svg_only(self):
         try:
             pixmap = self.web_view.grab()
-            saved = pixmap.save(self._svg_export_path, "PNG")
+            saved  = pixmap.save(self._svg_export_path, "PNG")
         except Exception as e:
-            saved = False
+            saved  = False
 
         self._restore_svg_export()
         self.web_view.setMinimumSize(0, 0)
@@ -328,7 +460,7 @@ class DiagramCanvas(QWidget):
 
         if self._svg_export_on_done:
             if saved:
-                self._svg_export_on_done(True, f"✓ Diagram PNG saved to {self._svg_export_path}")
+                self._svg_export_on_done(True,  f"✓ Diagram PNG saved to {self._svg_export_path}")
             else:
                 self._svg_export_on_done(False, f"Failed to save PNG to {self._svg_export_path}")
 

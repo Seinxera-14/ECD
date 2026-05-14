@@ -1,6 +1,6 @@
 # web_bridge.py
 from PySide6.QtCore import *
-
+import os
 
 class WebBridge(QObject):
     elementDoubleClicked = Signal(str, str, str)

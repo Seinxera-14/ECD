@@ -1,6 +1,7 @@
 # element_editor.py
 from PySide6.QtWidgets import *
-
+from PySide6.QtGui import *
+from PySide6.QtCore import *
 
 class ElementEditorDialog(QDialog):
     def __init__(self, element_id, element_type, current_text, parent=None):

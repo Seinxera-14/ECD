@@ -1,6 +1,8 @@
 # sidebar.py
 from PySide6.QtWidgets import *
 from PySide6.QtGui import *
+from PySide6.QtCore import *
+
 
 from constants import COMPLEXITY_LEVELS
 
@@ -15,6 +17,27 @@ class Sidebar(QWidget):
         lay = QVBoxLayout(self)
         lay.setSpacing(10)
         lay.setContentsMargins(12, 12, 12, 12)
+
+        self._collapsed = False
+        self._toggle_btn = QPushButton("◀ Hide")
+        self._toggle_btn.setFixedHeight(24)
+        self._toggle_btn.setStyleSheet(
+            "QPushButton{background:#cbd5e0;border:none;border-radius:4px;"
+            "font-size:11px;font-weight:bold;color:#2d3748;}"
+            "QPushButton:hover{background:#a0aec0;}"
+        )
+        self._toggle_btn.clicked.connect(self._toggle_collapse)
+        lay.addWidget(self._toggle_btn)
+
+        self._content = QWidget()
+        content_lay = QVBoxLayout(self._content)
+        content_lay.setSpacing(10)
+        content_lay.setContentsMargins(0, 0, 0, 0)
+
+        lay.addWidget(self._content)
+        self.setMinimumWidth(280)
+        self.setMaximumWidth(340)
+
 
         title = QLabel("Electrical Diagram Generator")
         title.setFont(QFont("Arial", 13, QFont.Weight.Bold))
@@ -42,8 +65,8 @@ class Sidebar(QWidget):
         detail_row.addWidget(detail_lbl)
 
         self.complexity_combo = QComboBox()
-        self.complexity_combo.addItems(["Simple", "Standard", "Detailed"])
-        self.complexity_combo.setCurrentText("Standard")
+        self.complexity_combo.addItems(["Simple", "Neutral", "Standard", "Detailed"])
+        self.complexity_combo.setCurrentText("Neutral")
         self.complexity_combo.setStyleSheet("""
             QComboBox {
                 color: #ffffff;
@@ -111,10 +134,8 @@ class Sidebar(QWidget):
         lay.addStretch()
 
         hint = QLabel(
-            "💡 Drag blue boxes to reposition.\n"
+            "💡 Drag any coloured box to reposition it.\n"
             "Double-click any text to edit it in-place.\n"
-            "Yellow boxes auto-center and stay aligned.\n"
-            "Arrows auto-update when boxes move.\n"
             "Edit Mermaid code → Apply to update diagram."
         )
         hint.setFont(QFont("Arial", 9))
@@ -126,15 +147,28 @@ class Sidebar(QWidget):
         self.setMaximumWidth(340)
         self.setStyleSheet("QWidget{background:#f7fafc;border-right:1px solid #e2e8f0;} QLabel{color:#2d3748;}")
 
-        self._update_complexity_style("Standard")
+        self._update_complexity_style("Neutral")
+
+
+    def _toggle_collapse(self):
+        self._collapsed = not self._collapsed
+        self._content.setVisible(not self._collapsed)
+        if self._collapsed:
+            self.setFixedWidth(32)
+            self._toggle_btn.setText("▶")
+        else:
+            self.setMinimumWidth(280)
+            self.setMaximumWidth(340)
+            self.setFixedWidth(QWIDGETSIZE_MAX)   # clear fixed width
+            self._toggle_btn.setText("◀ Hide")
 
     def _on_complexity_changed(self, level: str):
-        self.complexity_hint.setText(COMPLEXITY_LEVELS[level]["description"])
+        self.complexity_hint.setText(COMPLEXITY_LEVELS["Neutral"]["description"])
         self._update_complexity_style(level)
 
     def _update_complexity_style(self, level: str):
-        colors = {"Simple": "#10b981", "Standard": "#3b82f6", "Detailed": "#8b5cf6"}
-        c = colors.get(level, "#3b82f6")
+        colors = {"Neutral":  "#f59e0b", "Simple": "#10b981", "Standard": "#3b82f6", "Detailed": "#8b5cf6"}
+        c = colors.get(level, "#f59e0b")
         self.complexity_combo.setStyleSheet(f"""
             QComboBox {{
                 color: #000000;

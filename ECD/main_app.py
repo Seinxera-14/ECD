@@ -13,6 +13,7 @@ import requests
 
 from diagram_canvas import DiagramCanvas
 from sidebar import Sidebar
+from Kicad_exporter import export_kicad_schematic
 
 
 class MainWindow(QMainWindow):
@@ -23,71 +24,60 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_ui()
         self.installEventFilter(self)
+        # In MainWindow.__init__ or wherever you set up the app:
+        # app.aboutToQuit.connect(self.canvas.closeEvent)
 
     def _build_menu(self):
         mb = self.menuBar()
 
         file_m = mb.addMenu("&File")
         for label, shortcut, slot in [
-            ("&New", "Ctrl+N", self.new_diagram),
+            ("&New",          "Ctrl+N", self.new_diagram),
             ("&Save Diagram", "Ctrl+S", self.save_diagram),
         ]:
-            a = QAction(label, self)
-            a.setShortcut(shortcut)
-            a.triggered.connect(slot)
-            file_m.addAction(a)
+            a = QAction(label, self); a.setShortcut(shortcut); a.triggered.connect(slot); file_m.addAction(a)
         file_m.addSeparator()
 
-        # Export submenu
+        # Export submenu with PNG, SVG, PDF, and Mermaid download
         exp = file_m.addMenu("&Export")
         for label, slot in [
+            # ("Export as PNG (full page)",    self.export_as_png),
             ("Export as PNG", self.export_as_png),
-            ("Export as SVG", self.export_as_svg),
-            ("Export as PDF", self.export_as_pdf),
+            ("Export as SVG",                self.export_as_svg),
+            ("Export as PDF",                self.export_as_pdf),
             ("Download Mermaid Code (.mmd)", self.download_mermaid_code),
-            ("Export as KiCad Schematic", self.export_as_kicad),
+            ("Export as KiCad Schematic",    self.export_as_kicad),   
+
         ]:
-            a = QAction(label, self)
-            a.triggered.connect(slot)
-            exp.addAction(a)
+            a = QAction(label, self); a.triggered.connect(slot); exp.addAction(a)
 
         file_m.addSeparator()
-        ex = QAction("E&xit", self)
-        ex.setShortcut("Ctrl+Q")
-        ex.triggered.connect(self.close)
-        file_m.addAction(ex)
+        ex = QAction("E&xit", self); ex.setShortcut("Ctrl+Q"); ex.triggered.connect(self.close); file_m.addAction(ex)
 
         edit_m = mb.addMenu("&Edit")
         for label, shortcut, slot in [
-            ("&Reset Diagram", "Ctrl+R", self.reset_diagram),
-            ("&Copy Mermaid Code", "Ctrl+M", self.copy_mermaid),
-            ("C&lear All", "Ctrl+L", self.clear_all),
+            ("&Reset Diagram",    "Ctrl+R", self.reset_diagram),
+            ("&Copy Mermaid Code","Ctrl+M", self.copy_mermaid),
+            ("C&lear All",        "Ctrl+L", self.clear_all),
         ]:
-            a = QAction(label, self)
-            a.setShortcut(shortcut)
-            a.triggered.connect(slot)
-            edit_m.addAction(a)
+            a = QAction(label, self); a.setShortcut(shortcut); a.triggered.connect(slot); edit_m.addAction(a)
 
         view_m = mb.addMenu("&View")
         for label, shortcut, slot in [
-            ("Zoom &In", "Ctrl++", self.zoom_in),
-            ("Zoom &Out", "Ctrl+-", self.zoom_out),
+            ("Zoom &In",    "Ctrl++", self.zoom_in),
+            ("Zoom &Out",   "Ctrl+-", self.zoom_out),
             ("&Reset Zoom", "Ctrl+0", self.reset_zoom),
         ]:
-            a = QAction(label, self)
-            a.setShortcut(shortcut)
-            a.triggered.connect(slot)
-            view_m.addAction(a)
+            a = QAction(label, self); a.setShortcut(shortcut); a.triggered.connect(slot); view_m.addAction(a)
         view_m.addSeparator()
+        # fs = QAction("&Fullscreen", self); fs.setShortcut("F11"); fs.triggered.connect(self.toggle_fullscreen); view_m.addAction(fs)
         fs = QAction("&Fullscreen", self)
         fs.setShortcut("F11")
         fs.triggered.connect(self.toggle_fullscreen)
         view_m.addAction(fs)
 
         help_m = mb.addMenu("&Help")
-        ab = QAction("&About", self)
-        ab.triggered.connect(self.show_about)
-        help_m.addAction(ab)
+        ab = QAction("&About", self); ab.triggered.connect(self.show_about); help_m.addAction(ab)
 
     def _build_ui(self):
         central = QWidget()
@@ -112,7 +102,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status)
         self.status.showMessage(
             "Ready — enter a prompt, choose detail level, and click Generate. "
-            "Drag blue boxes · Double-click text · Edit Mermaid code and Apply."
+            "Drag boxes · Double-click text · Edit Mermaid code and Apply."
         )
 
     def _require_diagram(self, action_name="export"):
@@ -129,8 +119,7 @@ class MainWindow(QMainWindow):
         self.status.showMessage("New diagram started", 2000)
 
     def save_diagram(self):
-        if not self._require_diagram("save"):
-            return
+        if not self._require_diagram("save"): return
         path, _ = QFileDialog.getSaveFileName(self, "Save Diagram", "", "JSON Files (*.json)")
         if path:
             data = dict(self.canvas.current_parsed_data)
@@ -139,12 +128,11 @@ class MainWindow(QMainWindow):
                 json.dump(data, f, ensure_ascii=False, indent=2)
             self.status.showMessage(f"Saved to {path}", 3000)
 
+
     def export_as_png(self):
-        if not self._require_diagram():
-            return
+        if not self._require_diagram(): return
         path, _ = QFileDialog.getSaveFileName(self, "Export PNG (diagram only)", "", "PNG Files (*.png)")
-        if not path:
-            return
+        if not path: return
         self.status.showMessage("⏳ Preparing diagram-only PNG…", 0)
         self.canvas.export_svg_as_png(path, on_done=lambda ok, msg: (
             self.status.showMessage(msg, 4000),
@@ -153,11 +141,9 @@ class MainWindow(QMainWindow):
         ))
 
     def export_as_svg(self):
-        if not self._require_diagram():
-            return
+        if not self._require_diagram(): return
         path, _ = QFileDialog.getSaveFileName(self, "Export SVG", "", "SVG Files (*.svg)")
-        if not path:
-            return
+        if not path: return
         self.status.showMessage("⏳ Extracting SVG…", 0)
 
         def _done(ok, msg):
@@ -170,17 +156,16 @@ class MainWindow(QMainWindow):
         self.canvas.export_svg(path, on_done=_done)
 
     def export_as_pdf(self):
-        if not self._require_diagram():
-            return
+        if not self._require_diagram(): return
         path, _ = QFileDialog.getSaveFileName(self, "Export PDF", "", "PDF Files (*.pdf)")
-        if not path:
-            return
+        if not path: return
         self.status.showMessage("⏳ Generating PDF…", 0)
 
+        # Disconnect any previously connected pdfPrintingFinished to avoid duplicates
         try:
             self.canvas.web_view.page().pdfPrintingFinished.disconnect()
         except RuntimeError:
-            pass
+            pass  # No connections yet
 
         page_layout = QPageLayout(
             QPageSize(QPageSize.PageSizeId.A4),
@@ -245,8 +230,10 @@ class MainWindow(QMainWindow):
 
         self.canvas.web_view.page().runJavaScript(js_hide, 0,
             lambda _: QTimer.singleShot(200, _do_print))
+        
 
     def download_mermaid_code(self):
+        """Save the current Mermaid code as a .mmd text file."""
         code = self.canvas.get_current_mermaid_code()
         if not code:
             QMessageBox.warning(self, "No Diagram", "Generate a diagram first.")
@@ -255,8 +242,7 @@ class MainWindow(QMainWindow):
             self, "Download Mermaid Code", "diagram.mmd",
             "Mermaid Files (*.mmd);;Text Files (*.txt);;All Files (*)"
         )
-        if not path:
-            return
+        if not path: return
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(code)
@@ -266,57 +252,45 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Save Error", str(e))
 
-    def export_as_kicad(self):
-        if not self._require_diagram("export"):
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export KiCad Schematic",
-            "diagram.kicad_sch",
-            "KiCad Schematic Files (*.kicad_sch);;All Files (*)"
-        )
-        if not path:
-            return
-        try:
-            from Kicad_exporter import export_kicad_schematic
-            export_kicad_schematic(self.canvas.current_parsed_data, path)
-            msg = f"✓ KiCad schematic saved to {path}"
-            self.status.showMessage(msg, 4000)
-            QMessageBox.information(self, "Exported", msg)
-        except Exception as e:
-            msg = f"KiCad export failed: {e}"
-            self.status.showMessage(msg, 4000)
-            QMessageBox.critical(self, "Export Error", msg)
+    # ── Edit / View actions ───────────────────────────────────────────────────
 
-    def reset_diagram(self):
-        self.sidebar._reset()
-
+    def reset_diagram(self):  self.sidebar._reset()
     def zoom_in(self):
         self._scale_diagram(1.2)
 
     def zoom_out(self):
-        self._scale_diagram(1 / 1.2)
+        self._scale_diagram(1/1.2)
 
     def reset_zoom(self):
         self.canvas.web_view.page().runJavaScript("""
-            document.getElementById('diagram-root').style.transform = 'scale(1)';
+            (function() {
+                var el = document.getElementById('diagram-root');
+                if (!el) return;
+                el.dataset.scale = '1';
+                el.style.transform = 'scale(1)';
+                el.style.transformOrigin = 'top left';
+            })();
         """)
 
     def _scale_diagram(self, factor):
         self.canvas.web_view.page().runJavaScript(f"""
             (function() {{
-                const el = document.getElementById('diagram-root');
-                const current = el.dataset.scale ? parseFloat(el.dataset.scale) : 1;
-                const next = current * {factor};
+                var el = document.getElementById('diagram-root');
+                if (!el) return;
+                var current = el.dataset.scale ? parseFloat(el.dataset.scale) : 1.0;
+                var next = Math.min(Math.max(current * {factor}, 0.2), 5.0);
                 el.dataset.scale = next;
-                el.style.transform = `scale(${{next}})`;
-                el.style.transformOrigin = 'center center';
+                el.style.transform = 'scale(' + next + ')';
+                el.style.transformOrigin = 'top left';
             }})();
         """)
 
     def toggle_fullscreen(self):
+
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
 
+
+    # Exit fullscreen on ESC key
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.KeyPress:
             if event.key() == Qt.Key_Escape and self.isFullScreen():
@@ -324,11 +298,20 @@ class MainWindow(QMainWindow):
                 return True
         return super().eventFilter(obj, event)
 
+       
+
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self.canvas.web_view.page().runJavaScript(
+                "if(window.mermaidEditor && window.mermaidEditor.editState) {"
+                "  window.mermaidEditor.editState.input.blur(); }", 0)
+        super().keyPressEvent(event)
+
     def copy_mermaid(self):
         code = self.canvas.get_current_mermaid_code()
         if not code:
-            QMessageBox.warning(self, "No Diagram", "No diagram to copy.")
-            return
+            QMessageBox.warning(self, "No Diagram", "No diagram to copy."); return
         QApplication.clipboard().setText(code)
         self.status.showMessage("Mermaid code copied to clipboard", 2000)
 
@@ -340,34 +323,48 @@ class MainWindow(QMainWindow):
     def show_about(self):
         QMessageBox.about(self, "About",
             "<h2>Electrical Distribution Diagram Generator</h2>"
-            "<p>Version 4.0</p>"
+            "<p>Version 3.0</p>"
             "<p>Generate electrical distribution diagrams from natural language.</p>"
-            "<p><b>Safety Features:</b></p>"
-            "<ul>"
-            "<li>🔒 Arrows are system-locked — cannot be moved or reconnected</li>"
-            "<li>🟡 Yellow section labels auto-center and cannot be dragged</li>"
-            "<li>🔵 Blue component boxes can be repositioned within sections</li>"
-            "<li>⚡ Electrical topology is preserved — no bypassing breakers</li>"
-            "<li>📏 Grid snapping and boundary containment enforced</li>"
-            "</ul>"
             "<p><b>Export formats:</b></p>"
             "<ul>"
-            "<li>PNG — diagram-only</li>"
-            "<li>SVG — scalable vector graphic</li>"
-            "<li>PDF — A4 landscape</li>"
+            "<li>PNG — full page or diagram-only</li>"
+            "<li>SVG — scalable vector graphic (diagram only)</li>"
+            "<li>PDF — A4 landscape via Qt print engine</li>"
             "<li>Mermaid code — .mmd text file</li>"
-            "<li>KiCad — schematic file</li>"
             "</ul>"
-            "<p><b>Drag</b> blue component boxes to reposition.<br>"
+            "<p><b>Drag</b> participant boxes to reposition.<br>"
             "<b>Double-click</b> any text to edit it in-place.</p>"
             "<p>Built with PySide6 · Mermaid.js</p>")
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
+        if event.key() == Qt.Key.Key_Escape:
             self.canvas.web_view.page().runJavaScript(
                 "if(window.mermaidEditor && window.mermaidEditor.editState) {"
                 "  window.mermaidEditor.editState.input.blur(); }", 0)
         super().keyPressEvent(event)
+
+    def export_as_kicad(self):
+        """Export current diagram as a KiCad 6+ schematic (.kicad_sch)."""
+        if not self._require_diagram("export"): return
+ 
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export KiCad Schematic",
+            "diagram.kicad_sch",
+            "KiCad Schematic Files (*.kicad_sch);;All Files (*)"
+        )
+        if not path:
+            return
+ 
+        try:
+            export_kicad_schematic(self.canvas.current_parsed_data, path)
+            msg = f"✓ KiCad schematic saved to {path}"
+            self.status.showMessage(msg, 4000)
+            QMessageBox.information(self, "Exported", msg)
+        except Exception as e:
+            msg = f"KiCad export failed: {e}"
+            self.status.showMessage(msg, 4000)
+            QMessageBox.critical(self, "Export Error", msg)
 
 
 def main():
