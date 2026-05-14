@@ -16,68 +16,145 @@ from Kicad_exporter import export_kicad_schematic
 
 
 
-class OllamaClient: 
-    def __init__(self, model="qwen2.5:1.5b", url="http://localhost:11434/api/generate"):
+class OllamaClient:
+    def __init__(self, model="mistral:7b-instruct", url="http://localhost:11434/api/generate"):
         self.model = model
         self.url = url
 
-    def prompt_to_structured_data(self, prompt: str) -> dict:
-        system_prompt = """
-You are an assistant that converts user descriptions of electrical diagrams
-into structured JSON.
+    def prompt_to_structured_data(self, prompt: str, complexity: str = "Neutral") -> dict:
+        system_prompt = f"""You are an expert electrical diagram assistant. Convert the user's description into structured JSON for an electrical distribution diagram.
 
-Return ONLY valid JSON.
-Do NOT include explanations or markdown.
-/no_think
+Return ONLY valid JSON. No explanation. No markdown. No preamble. No text before or after the JSON object.
+Start your response with {{ and end with }}. Nothing else.
 
-Schema:
-{
-  "components": [["id","label"]],
-  "layout": "horizontal|vertical",
-  "voltage": "string",
-  "language": "en|ja"
-}
+=== OUTPUT SCHEMA ===
+{{
+  "components": [
+    ["supply", "label"],
+    ["maincb", "label"],
+    ["rcd", "label"],
+    ["bus", "label"],
+    ["nbar", "label"],
+    ["ebar", "label"],
+    ["outcb_1", "label"],
+    ["loads", "label"]
+  ],
+  "flags": {{
+    "show_neutral": true,
+    "show_earth": true,
+    "show_rcd": true,
+    "show_protection_notes": true,
+    "show_fault_paths": true
+  }},
+  "voltage": "230V AC",
+  "language": "en"
+}}
 
-IMPORTANT language rule:
-- If the user writes in English → set "language": "en"
-- If the user writes in Japanese language in actual japanese latters → set "language": "ja"
-- Default to "en" if unsure
+=== ALLOWED COMPONENT IDs ===
+supply, maincb, rcd, rcbo, bus, nbar, ebar, loads
+outcb_1, outcb_2, outcb_3, outcb_4, outcb_5
 
+=== COMPONENT MEANINGS ===
+supply   = incoming mains / grid source
+maincb   = main circuit breaker (MCB / MCCB)
+rcd      = residual current device (earth fault protection, monitors leakage)
+rcbo     = combined RCD + MCB in one unit
+bus      = busbar / distribution bar
+nbar     = neutral bar / neutral link
+ebar     = earth bar / protective earth bar / safety earth
+outcb_N  = outgoing branch circuit breaker (one per named circuit)
+loads    = load circuits / consuming devices
 
+=== COMPLEXITY LEVEL IN EFFECT: {complexity} ===
 
-Allowed component ids:
-supply, maincb, bus, nbar, ebar, outcb, loads
+COMPLEXITY RULES:
+
+"Neutral" (prompt-only mode):
+  - Include ONLY what the user actually describes. Do not add anything they did not mention.
+  - If the user says "supply and a breaker" output only supply + maincb + loads.
+  - Do not inject busbar, RCD, neutral bar, earth bar unless the user mentions them.
+  - flags must reflect ONLY what the user described.
+
+"Simple":
+  - Phase wire only. No neutral, no earth, no RCD, no fault paths.
+  - Always include: supply, maincb, loads.
+  - show_neutral=false, show_earth=false, show_rcd=false, show_fault_paths=false.
+  - Add any extra components the user explicitly names, but never add implicit ones.
+
+"Standard":
+  - Default set: supply, maincb, rcd, bus, nbar, ebar, loads.
+  - Always include the defaults PLUS anything the user explicitly names.
+  - show_neutral=true, show_earth=true, show_rcd=true.
+  - show_fault_paths=false unless user asks for fault paths.
+
+"Detailed":
+  - Default set: supply, maincb, rcd, bus, nbar, ebar, loads.
+  - Always include defaults PLUS every component the user names.
+  - For each named circuit add a separate outcb_N with a descriptive label.
+  - show_neutral=true, show_earth=true, show_rcd=true, show_fault_paths=true, show_protection_notes=true.
+
+=== EXPLICIT EXCLUSIONS — ALWAYS OVERRIDE COMPLEXITY ===
+If the user says "no RCD", "no fault path", "no neutral", "no earth", "simple breaker only":
+  Remove that component and set its flag to false. This overrides everything above.
+  User prompt is the ultimate source of truth. If they say "no RCD" then there is no RCD, even in Detailed mode.
+
+=== INFERENCE RULES ===
+1. Voltage: extract from prompt. Format: "230V AC" or "415V AC". Default: "unspecified".
+2. Language: Japanese text (hiragana/katakana/kanji) -> "ja". Otherwise -> "en".
+3. supply label must include voltage. Example: "Main Supply (230V AC)".
+4. rcd / rcbo label: use whatever the user names it. If user doesn't name it, use "RCD (Earth Fault Protection)".
+5. outcb_N: only multiple entries if user names distinct/multiple circuits. Max 5.
+6. "standard distribution panel" with no detail at Standard/Detailed complexity -> include full default set.
+7. The supply and load should always be present on any complexity level unless user explicitly says "no loads" or "direct connection". If user describes a load, there must be a supply. If user describes a supply, there must be a load.
+8. Always add a source, and a load unless user explicitly says "no loads". Even if user doesn't say "breaker", add a maincb between supply and load, unless user says "no breaker" or "direct connection".
 """
+
         payload = {
-            "model": self.model,
-            "prompt": f"{system_prompt.strip()}\n\nUser:\n{prompt}",
-            "stream": False,
-            "options": {
-                "temperature": 0.0,
-                "top_p": 0.9,
-                "num_predict": 2048,
-                "num_ctx": 4096,
+                "model": self.model,
+                "prompt": f"{system_prompt.strip()}\n\nUSER PROMPT:\n{prompt}\n\nJSON:",
+                "stream": False,
+                "options": {
+                    "temperature": 0.0,
+                    "top_p": 0.9,
+                    "num_predict": 1024,
+                    "num_ctx": 8192,
+                }
             }
-        }
-        print('parsed prompt using qwen1.5b')
-        response = requests.post(self.url, json=payload, timeout=60)
+
+        print(f"Parsing prompt using {self.model} | complexity={complexity}")
+        response = requests.post(self.url, json=payload, timeout=90)
         response.raise_for_status()
-        text = response.json().get("response", "").strip()
 
-        # Strip <think> blocks (qwen3 reasoning models)
-        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+        raw = response.json().get("response", "").strip()
+        json_obj = self._extract_json(raw)
 
+        if json_obj is None:
+            raise ValueError(f"Invalid or missing JSON output:\n{raw[:500]}")
+
+        return json_obj
+    
+
+    def _extract_json(self, text: str) -> dict | None:
+        """Try to extract and parse a JSON object from text. Returns dict or None."""
+        text = text.strip()
+        # Direct parse
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            if start == -1 or end <= start:
-                raise ValueError(f"No JSON found in model output:\n{text}")
+            pass
+        # Find first { ... last }
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start == -1 or end <= start:
+            return None
+        try:
             return json.loads(text[start:end])
+        except json.JSONDecodeError:
+            return None
         
 class ValidationWorker(QThread):
     validationComplete = Signal(str, bool)  # message, has_issues
+    findingsReady = Signal(list)  
 
     def __init__(self, prompt: str, mermaid_code: str, complexity: str = "Standard"):
         super().__init__()
@@ -95,16 +172,21 @@ class ValidationWorker(QThread):
 - No fault paths, no protection notes. This is expected and NOT a fault.
 - Only validate: supply → breaker → loads chain integrity.""",
 
+                "Neutral": """COMPLEXITY: Prompt-driven mode which includes ONLY what the user describes.""",
+
                 "Standard": """COMPLEXITY: Standard mode shows L/N/E but has intentional omissions.
 - Fault protection paths are deliberately excluded. Do NOT flag missing fault paths.
 - Outgoing MCBs (branch breakers) are excluded. Do NOT flag their absence.
 - Validate: supply → breaker → busbar → neutral bar → earth bar → loads connectivity.""",
 
-                "Detailed": """COMPLEXITY: Detailed mode is the full diagram.
-- All components must be present: supply, main breaker, busbar, neutral bar, earth bar, outgoing MCBs, loads.
-- Fault protection paths MUST be present. Flag if missing.
-- Protection notes on the main breaker MUST be present. Flag if missing.
-- Validate everything strictly."""
+                 "Detailed": """COMPLEXITY: Detailed mode is the full diagram.
+- All components must be present: supply, main breaker, RCD, busbar, neutral bar, earth bar, outgoing MCBs, loads.
+- RCD MUST appear between main breaker and busbar. Flag if missing (unless user explicitly excluded it).
+- Fault path MUST route through RCD: EBar → RCD → MainCB trip. Flag if fault path skips RCD.
+- Outgoing MCBs: if user named N specific circuits, expect N outgoing breaker nodes.
+- Protection notes on main breaker and RCD MUST be present. Flag if missing.
+- Validate everything strictly.
+- Exception: if user said "no RCD" or "no fault path", do NOT flag their absence."""
             }.get(complexity, "")
 
             system_prompt = f"""You are an expert electrical diagram validator.
@@ -122,6 +204,8 @@ Your job is to compare the user's intent against the Mermaid output and flag ONL
 - In Detailed mode only: missing fault paths or protection notes
 
 Do NOT flag components that are intentionally hidden by the complexity level.
+Also, check if the diagram and circuit workflow practically makes sense or not. 
+For example, if there is a load connected directly to the supply with no breaker, that is a real issue and should be flagged, even if the user didn't explicitly say "I want a breaker". The diagram must be logically correct as an electrical distribution system, not just contain the components mentioned by the user.
 
 Respond in this exact format:
 STATUS: OK or ISSUES_FOUND
@@ -149,6 +233,14 @@ Be concise. Only flag real problems."""
 
             has_issues = "ISSUES_FOUND" in text
             self.validationComplete.emit(text, has_issues)
+            findings_block = text.split("FINDINGS:")[-1].strip() if "FINDINGS:" in text else ""
+            findings_list = [
+                line.lstrip("- ").strip()
+                for line in findings_block.splitlines()
+                if line.strip() and line.strip() != "None"
+            ]
+            if has_issues and findings_list:
+                self.findingsReady.emit(findings_list)
         except Exception as e:
             self.validationComplete.emit(f"Validation unavailable: {e}", False)
 
@@ -180,22 +272,35 @@ COMPLEXITY_LEVELS = {
         "components": ["supply", "maincb", "loads"],
         "show_neutral": False,
         "show_earth": False,
+        "show_rcd": False,
         "show_protection_notes": False,
         "show_fault_paths": False,
         "description": "Phase (L) only — no neutral/earth, minimal steps",
     },
+    "Neutral": {
+        "components": [],
+        "show_neutral": False,
+        "show_earth": False,
+        "show_rcd": False,
+        "show_protection_notes": False,
+        "show_fault_paths": False,
+        "description": "Prompt-driven only — components come entirely from what you describe",
+    },
     "Standard": {
-        "components": ["supply", "maincb", "bus", "nbar", "ebar", "loads"],
+        "components": ["supply", "maincb", "bus", "nbar", "ebar", "rcd", "loads"],
         "show_neutral": True,
         "show_earth": True,
+        "show_rcd": True,
         "show_protection_notes": False,
         "show_fault_paths": False,
         "description": "L / N / E — breakers and busbars",
     },
     "Detailed": {
-        "components": ["supply", "maincb", "bus", "nbar", "ebar", "outcb", "loads"],
+        "components": ["supply", "maincb", "bus", "rcd", "nbar", "ebar",
+                       "outcb_1", "outcb_2", "outcb_3", "outcb_4", "outcb_5", "loads"], 
         "show_neutral": True,
         "show_earth": True,
+        "show_rcd": True,
         "show_protection_notes": True,
         "show_fault_paths": True,
         "description": "Outgoing MCBs, protection notes, fault paths",
@@ -208,6 +313,7 @@ class MermaidGenerator:
         self.components_map = {
             "main incoming supply": {"en": "Main Incoming Supply<br/>(230V / 415V)", "ja": "主電源<br/>(230V / 415V)"},
             "main breaker": {"en": "Main Breaker<br/>(MCB/MCCB)", "ja": "主遮断器<br/>(MCB/MCCB)"},
+            "rcd": {"en": "RCD<br/>(Earth Fault Protection)", "ja": "漏電遮断器<br/>(RCD/RCBO)"},
             "busbar": {"en": "Busbar<br/>(Distribution)", "ja": "母線<br/>(配電)"},
             "neutral bar": {"en": "Neutral Bar", "ja": "中性線バー"},
             "earth bar": {"en": "Earth Bar", "ja": "接地バー"},
@@ -217,12 +323,8 @@ class MermaidGenerator:
         self.keywords_map = {
             "incoming": {
                 "en": [
-                    "incoming", "supply", "source", "230v", "415v",
-                    # voltage patterns
-                    "mains", "grid", "utility", "infeed", "line in",
-                    # three-phase variants
-                    "three-phase", "3-phase", "three phase", "3phase",
-                    "ryb", "ryw", "rst", "uvw",            # phase naming conventions
+                    "incoming", "supply", "source", "230v", "415v", "mains", "grid", "utility", "infeed", "line in",
+                    "three-phase", "3-phase", "three phase", "3phase", "ryb", "ryw", "rst", "uvw",
                     "single-phase", "1-phase", "single phase",
                 ],
                 "ja": [
@@ -232,15 +334,9 @@ class MermaidGenerator:
             },            
             "breaker": {
                 "en": [
-                    "breaker", "mcb", "mccb", "protection",
-                    # common shorthand / typos the LLM or users write
-                    "circuit breaker", "main cb", "main breaker",
-                    "isolator", "isolating switch", "main switch",
-                    "rcd", "rcbo", "elcb",                 # residual current variants
-                    "fuse", "fuse switch", "switch fuse",
-                    "acb",                                  # air circuit breaker
-                    "vcb",                                  # vacuum circuit breaker
-                    "contactor",
+                    "breaker", "mcb", "mccb", "protection", "circuit breaker", "main cb", "main breaker",
+                    "isolator", "isolating switch", "main switch", "rcd", "rcbo", "elcb",
+                    "fuse", "fuse switch", "switch fuse", "acb", "vcb", "contactor",
                 ],
                 "ja": [
                     "遮断器", "ブレーカー", "ブレーカ",
@@ -248,14 +344,17 @@ class MermaidGenerator:
                     "ヒューズ", "開閉器",
                 ],
             },
+
+            "rcd": {
+                "en": ["rcd", "rcbo", "elcb", "residual current", "earth fault", "leakage",
+                    "earth leakage", "ground fault", "residual", "30ma", "100ma", "300ma"],
+                "ja": ["漏電遮断器", "漏電ブレーカー", "漏電", "地絡", "残留電流"],
+            },
+
             "busbar": {
                 "en": [
-                    "busbar", "distribution", "panel",
-                    "bus bar", "bus-bar", "copper bar", "copper strip",
-                    "db", "distribution board", "distribution box",
-                    "switchboard", "switchgear", "mdb",    # main distribution board
-                    "pcc",                                  # power control centre
-                    "mcc",                                  # motor control centre
+                    "busbar", "distribution", "panel", "bus bar", "bus-bar", "copper bar", "copper strip", 
+                    "db", "distribution board", "distribution box", "switchboard", "switchgear", "mdb", "pcc", "mcc",                                 
                 ],
                 "ja": [
                     "母線", "バスバー", "配電盤", "分電盤",
@@ -278,13 +377,14 @@ class MermaidGenerator:
                     "中性点", "中性線バー",
                 ],
             },            
+
             "earth": {
                 "en": [
                     "earth", "ground", "safety",
                     "earth bar", "e bar", "e-bar",
                     "earthing", "grounding",
                     "protective earth", "pe",
-                    "cpc",                                  # circuit protective conductor
+                    "cpc", "safety earth", "protective conductor",
                     "bonding", "equipotential bonding",
                     "earth terminal", "earth bus",
                     "chassis earth", "frame earth",
@@ -330,30 +430,30 @@ class MermaidGenerator:
             },
         }
         self.diagram_labels = {
-            # ── Box / Section headers ─────────────────────────────────────────
-            "section_incoming":     {"en": "Incoming Source",                "ja": "入力電源"},
-            "section_distribution": {"en": "Distribution Panel Components",  "ja": "分電盤部品"},
-            "section_load":         {"en": "Load Side",                      "ja": "負荷側"},
-
-            # ── Section note banners ──────────────────────────────────────────
-            "note_power_entry": {"en": "1. INCOMING POWER ENTRY",   "ja": "1. 受電"},
-            "note_internal":    {"en": "2. INTERNAL DISTRIBUTION",  "ja": "2. 内部配電"},
-            "note_outgoing":    {"en": "3. OUTGOING CIRCUITS",      "ja": "3. 出力回路"},
-            "note_fault":       {"en": "FAULT PROTECTION PATHS",    "ja": "故障保護経路"},
-
-            # ── Wire / conductor arrow labels ─────────────────────────────────
-            "wire_phase":   {"en": "Phase/Line Wire (L)",  "ja": "相線/ラインワイヤ (L)"},
-            "wire_neutral": {"en": "Neutral Wire (N)",     "ja": "中性線 (N)"},
-            "wire_earth":   {"en": "Earth Wire (E)",       "ja": "接地線 (E)"},
-
-            # ── Action arrow labels ───────────────────────────────────────────
-            "action_energize":   {"en": "Energize Busbar (L)",            "ja": "母線を励磁 (L)"},
-            "action_protection": {"en": "Protection: Overload/Short",     "ja": "保護: 過負荷/短絡"},
-            "action_distribute": {"en": "Distribute to Branch Breakers",  "ja": "分岐ブレーカーに配電"},
-            "action_feed":       {"en": "Line (L) - Protected Feed",      "ja": "ライン (L) - 保護給電"},
-            "action_return":     {"en": "Neutral (N) - Return Path",      "ja": "中性線 (N) - 帰路"},
-            "action_safety":     {"en": "Earth (E) - Safety Grounding",   "ja": "接地 (E) - 安全接地"},
-            "action_fault":      {"en": "Fault Path (E) - Trip Signal",   "ja": "故障経路 (E) - トリップ信号"},
+            "section_incoming":     {"en": "Incoming Source",               "ja": "入力電源"},
+            "section_distribution": {"en": "Distribution Panel Components", "ja": "分電盤部品"},
+            "section_load":         {"en": "Load Side",                     "ja": "負荷側"},
+            "note_power_entry":     {"en": "1. INCOMING POWER ENTRY",       "ja": "1. 受電"},
+            "note_internal":        {"en": "2. INTERNAL DISTRIBUTION",      "ja": "2. 内部配電"},
+            "note_outgoing":        {"en": "3. OUTGOING CIRCUITS",          "ja": "3. 出力回路"},
+            "note_fault":           {"en": "4. FAULT CURRENT PATH (E)",     "ja": "4. 故障電流経路 (E)"},            
+            "wire_phase":           {"en": "Phase/Line Wire (L)",           "ja": "相線/ラインワイヤ (L)"},
+            "wire_neutral":         {"en": "Neutral Wire (N)",              "ja": "中性線 (N)"},
+            "wire_earth":           {"en": "Earth Wire (E)",                "ja": "接地線 (E)"},
+            "action_energize":      {"en": "Energize Busbar (L)",           "ja": "母線を励磁 (L)"},
+            "action_protection":    {"en": "Protection: Overload/Short",    "ja": "保護: 過負荷/短絡"},
+            "action_rcd_monitor":   {"en": "Current Monitoring (RCD)",      "ja": "電流監視 (RCD)"},
+            "action_rcd_pass":      {"en": "Protected Distribution (L)",    "ja": "保護配電 (L)"},
+            "action_rcd_note":      {"en": "RCD: Residual Current\nTrip", "ja": "RCD: 漏電検知\n30mA以下でトリップ"},
+            "action_distribute":    {"en": "Distribute to Branch Breakers", "ja": "分岐ブレーカーに配電"},
+            "action_feed":          {"en": "Line (L) - Protected Feed",     "ja": "ライン (L) - 保護給電"},
+            "action_return":        {"en": "Neutral (N) - Return Path",     "ja": "中性線 (N) - 帰路"},
+            "action_safety":        {"en": "Earth (E) - Safety Grounding",  "ja": "接地 (E) - 安全接地"},
+            "action_fault":         {"en": "Fault Current Detected (E)",    "ja": "故障電流検知 (E)"},
+            "action_fault_return":  {"en": "Fault Return Path to Source",         "ja": "故障電流帰路 (電源へ)"},
+            "action_rcd_isolate":   {"en": "Open Contacts — Isolate Circuit",     "ja": "接点開放 — 回路遮断"},
+            "action_rcd_trip":      {"en": "RCD Trip Signal",               "ja": "RCDトリップ信号"},
+            "action_cb_open":       {"en": "Circuit Open — Supply Isolated", "ja": "回路開放 — 電源遮断"},
         }
         
     def detect_language(self, text):
@@ -361,7 +461,10 @@ class MermaidGenerator:
             return "ja"
         return "en"
 
-    def parse_prompt(self, prompt_text, complexity_level="Standard"):
+
+    
+
+    def parse_prompt(self, prompt_text, complexity_level="Neutral"):
         print('parsing prompt with hardcoded rules')
         if not prompt_text or not isinstance(prompt_text, str):
             return {"components": self.get_default_components("en"), 
@@ -369,54 +472,73 @@ class MermaidGenerator:
                     "voltage": "230V / 415V", 
                     "language": "en", 
                     "complexity": complexity_level}
+        
+        exclusions = {
+            "rcd":  ["no rcd", "no residual", "no earth fault"],
+            "nbar": ["no neutral"],
+            "ebar": ["no earth", "no ground"],
+            "bus":  ["no busbar", "no bus"],
+        }
+        prompt_lower = prompt_text.lower()
+        
+        found_components = [
+            (cid, lbl) for cid, lbl in found_components
+            if not any(ex in prompt_lower for ex in exclusions.get(cid, []))
+        ]
 
-        prompt = prompt_text.lower()
-        language = self.detect_language(prompt_text)
+        language = self.detect_language(prompt_text) if prompt_text else "en"
         voltage_text = "230V / 415V"
 
         try:
             for pattern in [r'(\d+)\s*[Vv]\s*[/／]?\s*(\d+)\s*[Vv]', r'(\d+)\s*[Vv]', r'(\d+)\s*volts?']:
-                m = re.search(pattern, prompt_text)
+                m = re.search(pattern, prompt_text or "")
                 if m:
                     voltage_text = f"{m.group(1)}V / {m.group(2)}V" if len(m.groups()) >= 2 else f"{m.group(1)}V"
                     break
-        except:
+        except Exception:
             pass
 
-        layout = "horizontal"
-        if "horizontal" in prompt or "水平" in prompt_text:
-            layout = "horizontal"
-        elif "vertical" in prompt or "垂直" in prompt_text:
-            layout = "vertical"
+    
 
         def check_keywords(category):
             en_kws = self.keywords_map.get(category, {}).get("en", [])
             ja_kws = self.keywords_map.get(category, {}).get("ja", [])
             return any(k in prompt for k in en_kws) or any(k in prompt_text for k in ja_kws)
 
-        found_components = []
-        allowed_ids = COMPLEXITY_LEVELS[complexity_level]["components"]
+        found_components = self.get_default_components(language, voltage_text, complexity_level)
+        comp_dict = dict(found_components)
+        # After keyword detection, inject required-but-missing components
+        # required_for_level = COMPLEXITY_LEVELS[complexity_level]["components"]
+        # found_ids = {cid for cid, _ in found_components}
 
-        if check_keywords("incoming") and "supply" in allowed_ids:
-            lbl = self.components_map["main incoming supply"][language].replace("230V / 415V", voltage_text)
-            found_components.append(("supply", lbl))
-        if check_keywords("breaker") and "maincb" in allowed_ids:
-            found_components.append(("maincb", self.components_map["main breaker"][language]))
-        if check_keywords("busbar") and "bus" in allowed_ids:
-            found_components.append(("bus", self.components_map["busbar"][language]))
-        if check_keywords("neutral") and "nbar" in allowed_ids:
-            found_components.append(("nbar", self.components_map["neutral bar"][language]))
-        if check_keywords("earth") and "ebar" in allowed_ids:
-            found_components.append(("ebar", self.components_map["earth bar"][language]))
-        if check_keywords("outgoing") and "outcb" in allowed_ids:
-            found_components.append(("outcb", self.components_map["outgoing mcbs"][language]))
-        if check_keywords("load") and "loads" in allowed_ids:
-            found_components.append(("loads", self.components_map["load circuits"][language]))
+        # for cid in required_for_level:
+        #     if cid not in found_ids and cid in self.components_map_by_id:
+        #         found_components.append((cid, self.components_map_by_id[cid][language]))
+        if "supply" in comp_dict:
+            comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(
+                "230V / 415V", voltage_text
+            )
+        # if check_keywords("incoming") and "supply" in comp_dict:
+        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
+        # if check_keywords("breaker") and "maincb" in comp_dict:
+        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
+        # if check_keywords("busbar") and "bus" in comp_dict:
+        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
+        # if check_keywords("neutral") and "nbar" in comp_dict:
+        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
+        # if check_keywords("earth") and "ebar" in comp_dict:
+        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
+        # if check_keywords("outgoing") and "outcb" in comp_dict:
+        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
+        # if check_keywords("load") and "loads" in comp_dict:
+        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
 
-        if not found_components:
-            found_components = self.get_default_components(language, voltage_text, complexity_level)
+        found_components = list(comp_dict.items())
 
-        return {"components": found_components, "layout": layout, "voltage": voltage_text,
+        # if not found_components:
+        #     found_components = self.get_default_components(language, voltage_text, complexity_level)
+
+        return {"components": found_components, "voltage": voltage_text,
                 "language": language, "complexity": complexity_level}
 
     def get_default_components(self, language, voltage_text="230V / 415V", complexity_level="Standard"):
@@ -424,113 +546,236 @@ class MermaidGenerator:
         all_defaults = [
             ("supply", self.components_map["main incoming supply"][language].replace("230V / 415V", voltage_text)),
             ("maincb", self.components_map["main breaker"][language]),
-            ("bus", self.components_map["busbar"][language]),
-            ("nbar", self.components_map["neutral bar"][language]),
-            ("ebar", self.components_map["earth bar"][language]),
-            ("outcb", self.components_map["outgoing mcbs"][language]),
-            ("loads", self.components_map["load circuits"][language]),
+            ("rcd",    self.components_map["rcd"][language]),
+            ("bus",    self.components_map["busbar"][language]),
+            ("nbar",   self.components_map["neutral bar"][language]),
+            ("ebar",   self.components_map["earth bar"][language]),
+            ("loads",  self.components_map["load circuits"][language]),
         ]
+        # Dynamically add whichever outcb_N slots are listed in this complexity level
+        for cid in allowed_ids:
+            if cid.startswith("outcb_"):
+                all_defaults.insert(-1, (cid, self.components_map["outgoing mcbs"][language]))
+
         return [(cid, lbl) for cid, lbl in all_defaults if cid in allowed_ids]
 
     def generate_mermaid_code(self, parsed_data):
         components = parsed_data["components"]
         language   = parsed_data.get("language", "en")
-        complexity = parsed_data.get("complexity", "Standard")
+        complexity = parsed_data.get("complexity", "Neutral")
         comp_map   = {cid: lbl for cid, lbl in components}
         L          = self.diagram_labels
-        cfg        = COMPLEXITY_LEVELS[complexity]
+
+        # ── Merge flags ───────────────────────────────────────────────────────────────────
+        # Complexity defaults WIN when they require True.
+        # The LLM can add True flags (e.g. user asked for fault paths on Standard),
+        # but must NOT suppress flags that the complexity level mandates.
+        # This fixes Detailed mode where Mistral often returns show_fault_paths=false.
+        complexity_cfg = COMPLEXITY_LEVELS.get(complexity, COMPLEXITY_LEVELS["Neutral"])
+        llm_flags = parsed_data.get("flags", {})
+
+        def _merge_flag(key):
+            complexity_val = complexity_cfg[key]
+            llm_val = llm_flags.get(key, None)
+            # OR: if complexity requires it, keep it; LLM can only add True
+            # return complexity_val or llm_val
+            if llm_val is not None:
+                return llm_val
+            return complexity_val
+
+        cfg = {
+            "show_neutral":          _merge_flag("show_neutral"),
+            "show_earth":            _merge_flag("show_earth"),
+            "show_rcd":              _merge_flag("show_rcd"),
+            "show_protection_notes": _merge_flag("show_protection_notes"),
+            "show_fault_paths":      _merge_flag("show_fault_paths"),
+        }
+
+        voltage_str = parsed_data.get("voltage", "")
+        prompt_text = parsed_data.get("prompt", "")   # see note below about storing prompt
+
+        THREE_PHASE_TERMS = ["415", "three-phase", "3-phase", "3phase", "ryb", "ryw", "rst", "uvw", "three phase"]
+        is_three_phase = any(t in voltage_str.lower() for t in THREE_PHASE_TERMS)
 
         def clean_label(lbl):
             return re.sub(r'<br\s*/?>', ' ', lbl).strip()
 
+        # ── Build participant ID map — handle dynamic outcb_1..5 ──────────────────
         pid = {
             "supply": "Supply",
             "maincb": "MainCB",
+            "rcd":    "RCD",
+            "rcbo":   "RCD",
             "bus":    "Bus",
             "nbar":   "NBar",
             "ebar":   "EBar",
             "outcb":  "OutCB",
             "loads":  "Loads",
         }
+        # Add dynamic outcb_N entries
+        for cid, _ in components:
+            if cid.startswith("outcb_"):
+                pid[cid] = cid.replace("outcb_", "OutCB")
 
-        lines = ["sequenceDiagram", "    autonumber", ""]
+        outcb_ids = [cid for cid, _ in components if cid.startswith("outcb_")]
+        # Also support legacy single "outcb"
+        if "outcb" in comp_map and not outcb_ids:
+            outcb_ids = ["outcb"]
 
-        # ── Box: Incoming Source ──────────────────────────────────────────────
+        lines = ["sequenceDiagram",  ""]
+
+        # ── Box: Incoming Source ──────────────────────────────────────────────────
         lines.append(f'    box rgb(238,242,255) "{L["section_incoming"][language]}"')
         if "supply" in comp_map:
             lines.append(f'        participant {pid["supply"]} as {clean_label(comp_map["supply"])}')
         lines.append("    end")
         lines.append("")
 
-        # ── Box: Distribution Panel ───────────────────────────────────────────
+        # ── Box: Distribution Panel ───────────────────────────────────────────────
         lines.append(f'    box rgb(240,253,244) "{L["section_distribution"][language]}"')
-        for cid in ["maincb", "bus", "nbar", "ebar", "outcb"]:
+        dist_order = ["maincb", "rcd", "rcbo", "bus", "nbar", "ebar"] + outcb_ids
+        for cid in dist_order:
             if cid in comp_map:
                 lines.append(f'        participant {pid[cid]} as {clean_label(comp_map[cid])}')
         lines.append("    end")
         lines.append("")
 
-        # ── Box: Load Side ────────────────────────────────────────────────────
+        # ── Box: Load Side ────────────────────────────────────────────────────────
         lines.append(f'    box rgb(255,247,237) "{L["section_load"][language]}"')
         if "loads" in comp_map:
             lines.append(f'        participant {pid["loads"]} as {clean_label(comp_map["loads"])}')
         lines.append("    end")
         lines.append("")
 
-        # ── Section 1: Incoming Power Entry ──────────────────────────────────
-        if "supply" in comp_map:
-            # Span the note to the rightmost present participant across all boxes
-            note_right_order = ["ebar", "nbar", "outcb", "bus", "maincb", "loads"]
-            note_right = next((pid[c] for c in note_right_order if c in comp_map), pid["supply"])
-            lines.append(f'    Note over {pid["supply"]},{note_right}: {L["note_power_entry"][language]}')
+        lines.append("   autonumber")
+        lines.append("")
 
+        # ── Section 1: Incoming Power Entry ──────────────────────────────────────
+        if "supply" in comp_map:
+            note_right_order = ["loads", "ebar", "nbar"] + list(reversed(outcb_ids)) + ["bus", "rcd", "maincb"]
+            # note_right = next((pid[c] for c in note_right_order if c in comp_map), pid["supply"])
+            # lines.append(f'    Note over {pid["supply"]},{note_right}: {L["note_power_entry"][language]}')
+            all_pids_in_order = [pid[c] for c in note_right_order if c in comp_map]
+            # lines.append(f'    Note over {all_pids_in_order[0]},{all_pids_in_order[-1]}: ...')
+            if len(all_pids_in_order) >= 2:
+                lines.append(f'    Note over {all_pids_in_order[0]},{all_pids_in_order[-1]}: {L["note_power_entry"][language]}')
+            else:
+                lines.append(f'    Note over {pid["supply"]}: {L["note_power_entry"][language]}')
+
+            # Phase wire: supply → maincb (or directly to rcd if no maincb — shouldn't happen)
             if "maincb" in comp_map:
-                lines.append(f'    {pid["supply"]}->>{pid["maincb"]}: {L["wire_phase"][language]}')
+                # lines.append(f'    {pid["supply"]}->>{pid["maincb"]}: {L["wire_phase"][language]}')
+                phase_label = L["wire_phase"][language]
+                if is_three_phase:
+                    phase_label = f"3-Phase Supply (L1/L2/L3) — {voltage_str}" if language == "en" else f"三相電源 (L1/L2/L3) — {voltage_str}"
+                lines.append(f'    {pid["supply"]}->>{pid["maincb"]}: {phase_label}')
+            # Neutral: supply → nbar (direct, parallel path)
             if cfg["show_neutral"] and "nbar" in comp_map:
                 lines.append(f'    {pid["supply"]}->>{pid["nbar"]}: {L["wire_neutral"][language]}')
+            # Earth: supply → ebar (direct, safety path)
             if cfg["show_earth"] and "ebar" in comp_map:
                 lines.append(f'    {pid["supply"]}-->>{pid["ebar"]}: {L["wire_earth"][language]}')
             lines.append("")
 
-        # ── Section 2: Internal Distribution ─────────────────────────────────
+            
+
+        # ── Section 2: Internal Distribution ─────────────────────────────────────
         if "maincb" in comp_map:
-            # Span the note across whatever distribution components are present
-            dist_right_order = ["outcb", "ebar", "nbar", "bus"]
-            dist_right = next((pid[c] for c in dist_right_order if c in comp_map), pid["maincb"])
-            lines.append(f'    Note over {pid["maincb"]},{dist_right}: {L["note_internal"][language]}')
+            # dist_right_order = (outcb_ids or []) + ["ebar", "nbar", "bus", "rcd"]
+            # In Section 2, replace the Note over maincb,dist_right line with:
+            dist_pids = [pid[c] for c in ["maincb", "rcd", "bus", "nbar", "ebar"] + outcb_ids if c in comp_map]
+            if len(dist_pids) >= 2:
+                lines.append(f'    Note over {dist_pids[0]},{dist_pids[-1]}: {L["note_internal"][language]}')
+            elif dist_pids:
+                lines.append(f'    Note over {dist_pids[0]}: {L["note_internal"][language]}')           
+           # Lines 648-649 — protection notes block
+            if cfg["show_protection_notes"]:
+                lines.append(f'    Note right of {pid["maincb"]}: {"Overcurrent / Short Circuit Protection" if language == "en" else "過電流/短絡保護"}')
+                if cfg["show_rcd"] and "rcd" in comp_map:
+                    lines.append(f'    Note right of {pid["rcd"]}: {"Earth Fault / Residual Current Protection" if language == "en" else "地絡/残留電流保護"}')
 
-            if "bus" in comp_map:
-                lines.append(f'    {pid["maincb"]}->>{pid["bus"]}: {L["action_energize"][language]}')
-                # Protection note always shown when bus+outcb present (matches second impl),
-                # but still respects show_protection_notes flag from complexity config.
-                if cfg["show_protection_notes"]:
-                    lines.append(f'    Note right of {pid["maincb"]}: {L["action_protection"][language]}')
-                if "outcb" in comp_map:
-                    lines.append(f'    {pid["bus"]}->>{pid["outcb"]}: {L["action_distribute"][language]}')
-            elif "outcb" in comp_map:
-                lines.append(f'    {pid["maincb"]}->>{pid["outcb"]}: {L["action_distribute"][language]}')
+            # maincb → rcd (if RCD present)
+            if cfg["show_rcd"] and "rcd" in comp_map:
+                lines.append(f'    {pid["maincb"]}->>{pid["rcd"]}: {L["action_rcd_monitor"][language]}')
+                
+                # rcd → bus (or directly to outcb if no bus)
+                if "bus" in comp_map:
+                    lines.append(f'    {pid["rcd"]}->>{pid["bus"]}: {L["action_rcd_pass"][language]}')
+                elif outcb_ids:
+                    for oid in outcb_ids:
+                        lines.append(f'    {pid["rcd"]}->>{pid[oid]}: {L["action_distribute"][language]}')
+            else:
+                # No RCD — maincb → bus or outcb directly
+                if "bus" in comp_map:
+                    lines.append(f'    {pid["maincb"]}->>{pid["bus"]}: {L["action_energize"][language]}')
+                elif outcb_ids:
+                    for oid in outcb_ids:
+                        lines.append(f'    {pid["maincb"]}->>{pid[oid]}: {L["action_distribute"][language]}')
+
+            # bus → outcb_N
+            if "bus" in comp_map and outcb_ids:
+                for oid in outcb_ids:
+                    lines.append(f'    {pid["bus"]}->>{pid[oid]}: {L["action_distribute"][language]}')
+
             lines.append("")
 
-        # ── Section 3: Outgoing Circuits ──────────────────────────────────────
+        # ── Section 3: Outgoing Circuits ──────────────────────────────────────────
         if "loads" in comp_map:
-            load_src_order = ["outcb", "bus", "maincb", "supply"]
-            load_src = next((pid[c] for c in load_src_order if c in comp_map), None)
-            if load_src:
-                lines.append(f'    Note over {load_src},{pid["loads"]}: {L["note_outgoing"][language]}')
-                lines.append(f'    {load_src}->>{pid["loads"]}: {L["action_feed"][language]}')
-            if cfg["show_neutral"] and "nbar" in comp_map:
-                lines.append(f'    {pid["nbar"]}->>{pid["loads"]}: {L["action_return"][language]}')
-            if cfg["show_earth"] and "ebar" in comp_map:
-                lines.append(f'    {pid["ebar"]}-->>{pid["loads"]}: {L["action_safety"][language]}')
+            load_src_order = outcb_ids + ["bus", "rcd", "maincb"]
+            load_src_cid = next((c for c in load_src_order if c in comp_map), None)
+
+            if load_src_cid is None:
+                lines.append(f'    Note over {pid["loads"]}: ⚠ WARNING: No upstream protection found')
+            else:
+                if load_src_cid != "loads":
+                    lines.append(f'    Note over {pid[load_src_cid]},{pid["loads"]}: {L["note_outgoing"][language]}')
+                else:
+                    lines.append(f'    Note over {pid["loads"]}: {L["note_outgoing"][language]}')
+
+                # ── NEW: outcb → Loads feed arrows ───────────────────────────────
+                if outcb_ids:
+                    feed_label = "Protected Feed (L)" if language == "en" else "保護給電 (L)"
+                    for oid in outcb_ids:
+                        lines.append(f'    {pid[oid]}->>{pid["loads"]}: {feed_label}')
+                elif load_src_cid and load_src_cid != "loads":
+                    # No outcbs — draw direct feed from whatever upstream exists
+                    lines.append(f'    {pid[load_src_cid]}->>{pid["loads"]}: {L["action_feed"][language]}')
+
+                # Neutral return and earth (unchanged)
+                if cfg["show_neutral"] and "nbar" in comp_map:
+                    lines.append(f'    {pid["loads"]}->>{pid["nbar"]}: {L["action_return"][language]}')
+                if cfg["show_earth"] and "ebar" in comp_map:
+                    lines.append(f'    {pid["ebar"]}-->>{pid["loads"]}: {L["action_safety"][language]}')
+
             lines.append("")
 
-        # ── Section 4: Fault Protection Paths (Detailed only) ────────────────
-        if cfg["show_fault_paths"] and "ebar" in comp_map and "maincb" in comp_map:
-            lines.append(f'    Note over {pid["ebar"]},{pid["maincb"]}: {L["note_fault"][language]}')
-            lines.append(f'    {pid["ebar"]}-->>{pid["maincb"]}: {L["action_fault"][language]}')
 
+        # ── Section 4: Fault Protection Paths ─────────────────────────────────
+        if cfg["show_fault_paths"] and "ebar" in comp_map and "loads" in comp_map:
+            L = self.diagram_labels
+            language = parsed_data.get("language", "en")
+
+            lines.append("")
+            # Note over must span left-to-right in participant order: EBar is left of Loads
+            lines.append(f'    Note over {pid["ebar"]},{pid["loads"]}: {L["note_fault"][language]}')
+
+            # Step 1: Fault current flows from load (motor casing) through CPC to Earth Bar
+            lines.append(f'    {pid["loads"]}-->>{pid["ebar"]}: {L["action_fault"][language]}')
+
+            # Step 2: Fault return path travels from Earth Bar back to supply source
+            # (via main earth terminal / transformer star-point bond)
+            if "supply" in comp_map:
+                lines.append(f'    {pid["ebar"]}-->>{pid["supply"]}: {L["action_fault_return"][language]}')
+
+            # Step 3: RCD monitors live vs neutral — shown as a note, not an arrow
+            # because RCD is a sensing device; fault current does NOT flow through it
+            if cfg["show_rcd"] and "rcd" in comp_map:
+                lines.append(f'    Note over {pid["rcd"]}: {"Monitors L vs N current | Trips on imbalance ≥ 30mA" if language == "en" else "L線とN線の電流を監視 | 30mA以上の不平衡でトリップ"}')
+
+                # Step 4: RCD opens contacts to isolate the faulted circuit (not the whole panel)
+                # Target is the load/motor circuit, not MainCB
+                lines.append(f'    {pid["rcd"]}-->>{pid["loads"]}: {L["action_rcd_isolate"][language]}')
         return "\n".join(lines)
-    
 
     def generate_display_html(self, mermaid_code, parsed_data, title=None, enable_editing=True):
         language = parsed_data.get("language", "en")
@@ -540,17 +785,17 @@ class MermaidGenerator:
         if title is None:
             title = "電力配電盤図" if language == "ja" else "Power Distribution Panel Diagram"
 
-        complexity_badge_colors = {"Simple": "#10b981", "Standard": "#3b82f6", "Detailed": "#8b5cf6"}
-        complexity_color = complexity_badge_colors.get(complexity, "#3b82f6")
+        complexity_badge_colors = {"Neutral":  "#f59e0b", "Simple": "#10b981", "Standard": "#3b82f6", "Detailed": "#8b5cf6"}
+        complexity_color = complexity_badge_colors.get(complexity, "#f59e0b")
 
         key_texts = {
             "en": {
                 "logic_title": "Key Logic:",
                 "logic_items": ["Line (L) passes through Breakers", "Neutral (N) goes direct to Neutral Bar", "Earth (E) goes direct to Earth Bar"],
                 "safety_title": "Safety:",
-                "safety_items": ["Main Breaker isolates entire panel", "Outgoing MCBs protect individual circuits", "Earth ensures chassis safety"],
+                "safety_items": ["Main Breaker isolates entire panel", "RCD monitors L/N current imbalance — trips faulted circuit at ≥30mA", "Outgoing MCBs protect individual circuits", "Earth (CPC) carries fault current to source — RCD senses the imbalance",],
                 "components_title": "Components:",
-                "components_items": ["<strong>MCCB:</strong> Molded Case Circuit Breaker", "<strong>MCB:</strong> Miniature Circuit Breaker", "<strong>Busbar:</strong> Copper strip for distribution"],
+                "components_items": ["<strong>MCCB:</strong> Molded Case Circuit Breaker", "<strong>MCB:</strong> Miniature Circuit Breaker", "<strong>RCD/RCBO:</strong> Residual Current Device", "<strong>Busbar:</strong> Copper strip for distribution"],
                 "generated": "Generated from prompt description",
                 "tip": "Tip: Drag any box to move it. Double-click any text to edit it. Edit code below to update diagram.",
                 "code_label": "Mermaid Code (edit to update diagram →)",
@@ -560,8 +805,7 @@ class MermaidGenerator:
                 "logic_title": "主要ロジック:",
                 "logic_items": ["相線(L)は遮断器を通過", "中性線(N)は中性線バーへ直接接続", "接地線(E)は接地バーへ直接接続"],
                 "safety_title": "安全機能:",
-                "safety_items": ["主遮断器は全盤を絶縁", "出力MCBは個々の回路を保護", "接地は筐体の安全性を確保"],
-                "components_title": "構成部品:",
+                "safety_items": ["主遮断器は全盤を絶縁",  "RCDはL/N電流の不平衡を監視し30mA以上で該当回路を遮断", "出力MCBは個々の回路を保護", "CPC(接地線)が故障電流を電源に帰還させRCDが不平衡を検知",],
                 "components_items": ["<strong>MCCB:</strong> モールドケース遮断器", "<strong>MCB:</strong> 配線用遮断器", "<strong>Busbar:</strong> 銅製配電用導体"],
                 "generated": "プロンプトから生成",
                 "tip": "ヒント: ボックスをドラッグして移動。ダブルクリックでテキストを編集。コードを編集して図を更新。",
@@ -1549,8 +1793,11 @@ class CodeEditorPanel(QWidget):
 
 
 class ValidationPanel(QWidget):
+    fixRequested = Signal()   # emitted when user clicks "Fix Issues"
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._current_findings: list = []
         self._build_ui()
         self.hide()
 
@@ -1566,6 +1813,25 @@ class ValidationPanel(QWidget):
         header.addWidget(self.icon_lbl)
         header.addWidget(self.title_lbl)
         header.addStretch()
+
+        # Fix Issues button — enabled only when there are real findings
+        self.fix_btn = QPushButton("🔧 Fix Issues")
+        self.fix_btn.setFixedHeight(24)
+        self.fix_btn.setEnabled(False)
+        self.fix_btn.setStyleSheet("""
+            QPushButton {
+                background:#c53030;color:#fff;
+                border:none;border-radius:4px;
+                padding:2px 10px;font-size:11px;font-weight:bold;
+            }
+            QPushButton:hover   { background:#9b2c2c; }
+            QPushButton:pressed { background:#742a2a; }
+            QPushButton:disabled{ background:#cbd5e0;color:#718096; }
+        """)
+        self.fix_btn.setToolTip("Auto-patch the diagram to resolve the findings above")
+        self.fix_btn.clicked.connect(self._on_fix_clicked)
+        header.addWidget(self.fix_btn)
+
         self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(20, 20)
         self.close_btn.setStyleSheet("border:none; color:#718096; font-size:12px;")
@@ -1585,13 +1851,23 @@ class ValidationPanel(QWidget):
                 background: #fff7ed;
             }
         """)
-        self.setMaximumHeight(120)
+        self.setMaximumHeight(140)
+
+    def set_findings(self, findings: list):
+        """Store parsed findings so the Fix button can forward them."""
+        self._current_findings = findings
+        self.fix_btn.setEnabled(bool(findings))
+
+    def _on_fix_clicked(self):
+        self.fixRequested.emit()
 
     def show_loading(self):
         self.setStyleSheet("ValidationPanel{border:1px solid #bee3f8;border-radius:6px;background:#ebf8ff;}")
         self.icon_lbl.setText("🔍")
         self.title_lbl.setText("Validating diagram against prompt…")
         self.findings_lbl.setText("")
+        self.fix_btn.setEnabled(False)
+        self._current_findings = []
         self.show()
 
     def show_result(self, text: str, has_issues: bool):
@@ -1605,6 +1881,7 @@ class ValidationPanel(QWidget):
             self.icon_lbl.setText("✅")
             self.title_lbl.setText("Diagram looks good")
             self.title_lbl.setStyleSheet("color:#276749;")
+            self.fix_btn.setEnabled(False)
 
         findings = ""
         if "FINDINGS:" in text:
@@ -1640,6 +1917,10 @@ class DiagramCanvas(QWidget):
         lay.addWidget(self.web_view)
         self.validation_panel = ValidationPanel()
         lay.addWidget(self.validation_panel)
+        # "Fix Issues" button in the panel triggers auto-correction using stored findings
+        self.validation_panel.fixRequested.connect(
+            lambda: self._on_validation_issues_found(self.validation_panel._current_findings)
+        )
 
         # Stub: code panel lives inside the WebView HTML now
         self.code_panel = type('_Stub', (), {
@@ -1659,7 +1940,7 @@ class DiagramCanvas(QWidget):
 
         super().closeEvent(event)
 
-    def generate_from_prompt(self, prompt_text, complexity_level="Standard"):
+    def generate_from_prompt(self, prompt_text, complexity_level="Neutral"):
         try:
             prompt_text = prompt_text.strip()
             if not prompt_text:
@@ -1668,43 +1949,62 @@ class DiagramCanvas(QWidget):
 
             parsed_data = None
 
-            # ── Step 1: Parse prompt into structured data ──────────────────────
+            # ── Step 1: Parse prompt via LLM ──────────────────────────────────────
             try:
                 ollama = OllamaClient()
-                parsed_data = ollama.prompt_to_structured_data(prompt_text)
-                # After parsing from Ollama, ensure 'loads' is present if the prompt mentions loads
-                load_hints = ["load", "circuit", "light", "socket", "appliance", "consumer", "outlet"]
-                if "loads" not in [c for c, _ in parsed_data["components"]]:
-                    if any(hint in prompt_text.lower() for hint in load_hints):
-                        allowed_ids = COMPLEXITY_LEVELS[complexity_level]["components"]
-                        if "loads" in allowed_ids:
-                            lang = parsed_data.get("language", "en")
-                            lbl = self.generator.components_map["load circuits"][lang]
-                            parsed_data["components"].append(("loads", lbl))
+                parsed_data = ollama.prompt_to_structured_data(prompt_text, complexity_level)
 
                 if not isinstance(parsed_data, dict) or "components" not in parsed_data:
-                    raise ValueError("Invalid LLM output")
-                allowed_ids = COMPLEXITY_LEVELS[complexity_level]["components"]
-                parsed_data["components"] = [
-                    (c, l) for c, l in parsed_data["components"] if c in allowed_ids
-                ]
+                    raise ValueError("Invalid LLM output — missing components key")
+
+                # ── Hard safety minimum: supply and maincb must always exist ──────
+                comp_ids = [c for c, _ in parsed_data["components"]]
+                lang = parsed_data.get("language", "en")
+                voltage = parsed_data.get("voltage", "230V / 415V")
+                if "supply" not in comp_ids:
+                    parsed_data["components"].insert(0, (
+                        "supply",
+                        self.generator.components_map["main incoming supply"][lang].replace("230V / 415V", voltage)
+                    ))
+                if "maincb" not in comp_ids:
+                    parsed_data["components"].insert(1, (
+                        "maincb",
+                        self.generator.components_map["main breaker"][lang]
+                    ))
+
+                # Only inject if prompt didn't explicitly exclude them
+                explicit_no_breaker = any(p in prompt_text.lower() for p in ["no breaker", "direct connection", "no maincb"])
+                if "supply" not in comp_ids:
+                    parsed_data["components"].insert(0, ("supply", ...))
+                if "maincb" not in comp_ids and not explicit_no_breaker:
+                    parsed_data["components"].insert(1, ("maincb", ...))
+
+                # For complexity filtering: keep anything the LLM explicitly included
+                llm_comp_ids = set(c for c, _ in parsed_data["components"])
+                if complexity_level != "Neutral":
+                    allowed_ids = set(COMPLEXITY_LEVELS[complexity_level]["components"])
+                    allow_outcb = any(c.startswith("outcb") for c in allowed_ids)
+                    parsed_data["components"] = [
+                        (c, l) for c, l in parsed_data["components"]
+                        if c in allowed_ids or (allow_outcb and c.startswith("outcb_"))
+                        or c in llm_comp_ids  # ← prompt-explicit components always survive
+                    ]
+
                 parsed_data["complexity"] = complexity_level
-                # Trust explicit language from LLM; only fallback to detection if missing
-                # if "language" not in parsed_data or parsed_data["language"] not in ("en", "ja"):
-                
+                parsed_data["prompt"] = prompt_text    # ← store original prompt for generator to read
                 parsed_data["language"] = self.generator.detect_language(prompt_text)
-                    
-                print("DEBUG: Parsed via Ollama")
+                print(f"Parsed via LLM ")
+
             except Exception as llm_err:
+            
                 print(f"LLM parsing failed, using regex fallback: {llm_err}")
                 parsed_data = self.generator.parse_prompt(prompt_text, complexity_level)
 
             self.current_parsed_data = parsed_data
             self.original_parsed_data = parsed_data.copy()
 
-            # ── Step 2: Generate Mermaid code ──────────────────────────────────
+            # ── Step 2: Generate Mermaid code ─────────────────────────────────────
             mermaid_code = self.generator.generate_mermaid_code(parsed_data)
-
             self._current_mermaid_code = mermaid_code
             self.code_panel.set_code(mermaid_code)
 
@@ -1717,9 +2017,10 @@ class DiagramCanvas(QWidget):
                     f"Diagram generated ({lang_name}, {complexity_level}), "
                     f"{len(parsed_data.get('components', []))} components. "
                     "Drag boxes · Double-click text · Edit code below.", 6000)
-                # ── Step 3: Async validation ───────────────────────────────────────
-                self._last_prompt = prompt_text
-                self._run_validation(prompt_text, mermaid_code)
+
+            # ── Step 3: Async validation ───────────────────────────────────────────
+            self._last_prompt = prompt_text
+            self._run_validation(prompt_text, mermaid_code)
             return True
 
         except Exception as e:
@@ -1795,7 +2096,107 @@ class DiagramCanvas(QWidget):
 
         self._validation_worker = ValidationWorker(prompt, mermaid_code, complexity)  # ← pass complexity
         self._validation_worker.validationComplete.connect(self.validation_panel.show_result)
+        self._validation_worker.findingsReady.connect(self._on_validation_issues_found)
+        self._validation_worker.findingsReady.connect(self.validation_panel.set_findings)
         self._validation_worker.start()
+
+
+    def _on_validation_issues_found(self, findings: list):
+        """Patch parsed_data (components + flags) based on validation findings, then redraw."""
+        if not self.current_parsed_data or not findings:
+            return
+
+        pd = self.current_parsed_data
+        comp_map = dict(pd["components"])
+        complexity = pd.get("complexity", "Standard")
+        lang = pd.get("language", "en")
+        changed = False
+
+        # ── 1. Patch missing components ───────────────────────────────────────────
+        COMPONENT_KEYWORDS = {
+            "rcd":    ["rcd", "rcbo", "residual", "earth fault"],
+            "bus":    ["busbar", "bus"],
+            "nbar":   ["neutral bar", "neutral"],
+            "ebar":   ["earth bar", "earth"],
+            "maincb": ["main breaker", "main cb", "circuit breaker"],
+            "supply": ["supply", "source"],
+        }
+        CID_TO_MAP_KEY = {
+            "rcd": "rcd", "bus": "busbar", "nbar": "neutral bar",
+            "ebar": "earth bar", "maincb": "main breaker",
+            "supply": "main incoming supply",
+        }
+        EXPLICIT_EXCLUSION_PHRASES = {
+            "rcd":  ["no rcd", "without rcd", "no earth fault"],
+            "nbar": ["no neutral"],
+            "ebar": ["no earth"],
+            "maincb": ["no breaker", "direct connection"],
+        }
+        prompt_lower = pd.get("prompt", "").lower()
+        for finding in findings:
+            fl = finding.lower()
+            for cid, keywords in COMPONENT_KEYWORDS.items():
+                exclusion_phrases = EXPLICIT_EXCLUSION_PHRASES.get(cid, [])
+                if any(ep in prompt_lower for ep in exclusion_phrases):
+                    if any(kw in fl for kw in keywords):
+                        if any(w in fl for w in ("missing", "absent", "not present", "should", "no ")):
+                            if cid not in comp_map:
+                                label = self.generator.components_map.get(
+                                    CID_TO_MAP_KEY.get(cid, cid), {}
+                                ).get(lang, cid.upper())
+                                comp_map[cid] = label
+                                changed = True
+
+        # ── 2. Patch flags from findings ──────────────────────────────────────────
+        # Findings about fault paths / protection notes / RCD being absent trigger
+        # the corresponding flag even if the component already exists.
+        flags = pd.get("flags", {}).copy()
+
+        FLAG_KEYWORDS = {
+            "show_fault_paths":      ["fault path", "fault current", "fault route"],
+            "show_protection_notes": ["protection note", "protection label", "overcurrent note",
+                                      "rcd note", "missing note"],
+            "show_rcd":              ["rcd missing", "rcd absent", "rcd not present",
+                                      "no rcd", "missing rcd"],
+            "show_neutral":          ["neutral missing", "neutral absent", "no neutral"],
+            "show_earth":            ["earth missing", "earth absent", "no earth"],
+        }
+
+        for finding in findings:
+            fl = finding.lower()
+            for flag_key, keywords in FLAG_KEYWORDS.items():
+                if any(kw in fl for kw in keywords):
+                    if not flags.get(flag_key, False):
+                        flags[flag_key] = True
+                        changed = True
+
+        if not changed:
+            # Nothing to patch — just redraw anyway so button feels responsive
+            pass  # fall through to redraw
+
+        # ── 3. Commit changes back to parsed_data ─────────────────────────────────
+        ORDER = ["supply", "maincb", "rcd", "rcbo", "bus", "nbar", "ebar",
+                 "outcb_1", "outcb_2", "outcb_3", "outcb_4", "outcb_5", "loads"]
+        existing_extras = [(c, l) for c, l in pd["components"] if c not in comp_map]
+        pd["components"] = [(c, comp_map[c]) for c in ORDER if c in comp_map] + existing_extras
+        pd["flags"] = flags
+
+        # ── 4. Redraw ─────────────────────────────────────────────────────────────
+        try:
+            new_code = self.generator.generate_mermaid_code(pd)
+            self._current_mermaid_code = new_code
+            self.code_panel.set_code(new_code)
+            html = self.generator.generate_display_html(new_code, pd, enable_editing=True)
+            self.web_view.setHtml(html)
+            # Disable Fix button and re-run validation on the corrected diagram
+            self.validation_panel.fix_btn.setEnabled(False)
+            self.validation_panel._current_findings = []
+            self._run_validation(pd.get("prompt", self._last_prompt), new_code)
+            if self.parent_window and hasattr(self.parent_window, 'status'):
+                self.parent_window.status.showMessage(
+                    "✓ Diagram corrected — re-validating…", 4000)
+        except Exception as e:
+            print(f"Auto-correction regeneration failed: {e}")
     
     def _on_element_edited(self, element_id, element_type, new_text, x, y):
         self._update_parsed_data(element_id, element_type, new_text)
@@ -2077,8 +2478,8 @@ class Sidebar(QWidget):
         detail_row.addWidget(detail_lbl)
 
         self.complexity_combo = QComboBox()
-        self.complexity_combo.addItems(["Simple", "Standard", "Detailed"])
-        self.complexity_combo.setCurrentText("Standard")
+        self.complexity_combo.addItems(["Simple", "Neutral", "Standard", "Detailed"])
+        self.complexity_combo.setCurrentText("Neutral")
         self.complexity_combo.setStyleSheet("""
             QComboBox {
                 color: #ffffff;
@@ -2159,7 +2560,7 @@ class Sidebar(QWidget):
         self.setMaximumWidth(340)
         self.setStyleSheet("QWidget{background:#f7fafc;border-right:1px solid #e2e8f0;} QLabel{color:#2d3748;}")
 
-        self._update_complexity_style("Standard")
+        self._update_complexity_style("Neutral")
 
 
     def _toggle_collapse(self):
@@ -2175,12 +2576,12 @@ class Sidebar(QWidget):
             self._toggle_btn.setText("◀ Hide")
 
     def _on_complexity_changed(self, level: str):
-        self.complexity_hint.setText(COMPLEXITY_LEVELS[level]["description"])
+        self.complexity_hint.setText(COMPLEXITY_LEVELS["Neutral"]["description"])
         self._update_complexity_style(level)
 
     def _update_complexity_style(self, level: str):
-        colors = {"Simple": "#10b981", "Standard": "#3b82f6", "Detailed": "#8b5cf6"}
-        c = colors.get(level, "#3b82f6")
+        colors = {"Neutral":  "#f59e0b", "Simple": "#10b981", "Standard": "#3b82f6", "Detailed": "#8b5cf6"}
+        c = colors.get(level, "#f59e0b")
         self.complexity_combo.setStyleSheet(f"""
             QComboBox {{
                 color: #000000;
@@ -2512,7 +2913,10 @@ class MainWindow(QMainWindow):
 
 
     def keyPressEvent(self, event):
-        self.toggle_fullscreen(event)
+        if event.key() == Qt.Key.Key_Escape:
+            self.canvas.web_view.page().runJavaScript(
+                "if(window.mermaidEditor && window.mermaidEditor.editState) {"
+                "  window.mermaidEditor.editState.input.blur(); }", 0)
         super().keyPressEvent(event)
 
     def copy_mermaid(self):
@@ -2542,13 +2946,6 @@ class MainWindow(QMainWindow):
             "<p><b>Drag</b> participant boxes to reposition.<br>"
             "<b>Double-click</b> any text to edit it in-place.</p>"
             "<p>Built with PySide6 · Mermaid.js</p>")
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape:
-            self.canvas.web_view.page().runJavaScript(
-                "if(window.mermaidEditor && window.mermaidEditor.editState) {"
-                "  window.mermaidEditor.editState.input.blur(); }", 0)
-        super().keyPressEvent(event)
 
     def export_as_kicad(self):
         """Export current diagram as a KiCad 6+ schematic (.kicad_sch)."""
