@@ -105,8 +105,7 @@ If the user says "no RCD", "no fault path", "no neutral", "no earth", "simple br
 4. rcd / rcbo label: use whatever the user names it. If user doesn't name it, use "RCD (Earth Fault Protection)".
 5. outcb_N: only multiple entries if user names distinct/multiple circuits. Max 5.
 6. "standard distribution panel" with no detail at Standard/Detailed complexity -> include full default set.
-7. The supply and load should always be present on any complexity level unless user explicitly says "no loads" or "direct connection". If user describes a load, there must be a supply. If user describes a supply, there must be a load.
-8. Always add a source, and a load unless user explicitly says "no loads". Even if user doesn't say "breaker", add a maincb between supply and load, unless user says "no breaker" or "direct connection".
+7. The supply and load should always be present on any complexity level unless user explicitly says "no loads" or "direct connection" or "no supply.
 """
 
         payload = {
