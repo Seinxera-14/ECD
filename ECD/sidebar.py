@@ -2,6 +2,7 @@
 from PySide6.QtWidgets import *
 from PySide6.QtGui import *
 from PySide6.QtCore import *
+from PyQt5.QtCore import QWIDGETSIZE_MAX
 
 
 from constants import COMPLEXITY_LEVELS
@@ -159,7 +160,7 @@ class Sidebar(QWidget):
         else:
             self.setMinimumWidth(280)
             self.setMaximumWidth(340)
-            self.setFixedWidth(QWIDGETSIZE_MAX)   # clear fixed width
+            self.setFixedWidth(QWIDGETSIZE_MAX)
             self._toggle_btn.setText("◀ Hide")
 
     def _on_complexity_changed(self, level: str):
@@ -201,9 +202,8 @@ class Sidebar(QWidget):
             return
         complexity = self.complexity_combo.currentText()
         if hasattr(self.main_window, 'canvas'):
-            ok = self.main_window.canvas.generate_from_prompt(prompt, complexity)
-            if ok:
-                self.reset_btn.setEnabled(True)
+            self.main_window.canvas.generate_from_prompt(prompt, complexity)
+            # reset_btn is re-enabled by _finalise_generation once the diagram is ready
 
     def _reset(self):
         if not hasattr(self.main_window, 'canvas') or not self.main_window.canvas.original_parsed_data:

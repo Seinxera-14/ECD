@@ -336,13 +336,6 @@ class MainWindow(QMainWindow):
             "<b>Double-click</b> any text to edit it in-place.</p>"
             "<p>Built with PySide6 · Mermaid.js</p>")
 
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape:
-            self.canvas.web_view.page().runJavaScript(
-                "if(window.mermaidEditor && window.mermaidEditor.editState) {"
-                "  window.mermaidEditor.editState.input.blur(); }", 0)
-        super().keyPressEvent(event)
-
     def export_as_kicad(self):
         """Export current diagram as a KiCad 6+ schematic (.kicad_sch)."""
         if not self._require_diagram("export"): return

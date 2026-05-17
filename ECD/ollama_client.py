@@ -2,6 +2,7 @@
 import json
 import re
 import requests
+from PySide6.QtCore import QThread, Signal
 
 
 class OllamaClient:
@@ -31,8 +32,8 @@ Start your response with {{ and end with }}. Nothing else.
     "show_neutral": true,
     "show_earth": true,
     "show_rcd": true,
-    "show_protection_notes": false,
-    "show_fault_paths": false
+    "show_protection_notes": true,
+    "show_fault_paths": true
   }},
   "voltage": "230V AC",
   "language": "en"
@@ -49,7 +50,7 @@ rcd      = residual current device (earth fault protection, monitors leakage)
 rcbo     = combined RCD + MCB in one unit
 bus      = busbar / distribution bar
 nbar     = neutral bar / neutral link
-ebar     = earth bar / protective earth bar
+ebar     = earth bar / protective earth bar / safety earth
 outcb_N  = outgoing branch circuit breaker (one per named circuit)
 loads    = load circuits / consuming devices
 
@@ -84,55 +85,42 @@ COMPLEXITY RULES:
 === EXPLICIT EXCLUSIONS — ALWAYS OVERRIDE COMPLEXITY ===
 If the user says "no RCD", "no fault path", "no neutral", "no earth", "simple breaker only":
   Remove that component and set its flag to false. This overrides everything above.
+  User prompt is the ultimate source of truth. If they say "no RCD" then there is no RCD, even in Detailed mode.
 
 === INFERENCE RULES ===
 1. Voltage: extract from prompt. Format: "230V AC" or "415V AC". Default: "unspecified".
 2. Language: Japanese text (hiragana/katakana/kanji) -> "ja". Otherwise -> "en".
 3. supply label must include voltage. Example: "Main Supply (230V AC)".
-4. rcd label: use "RCD / RCBO" unless user names it differently.
-5. outcb_N: only multiple entries if user names distinct circuits. Max 5.
+4. rcd / rcbo label: use whatever the user names it. If user doesn't name it, use "RCD (Earth Fault Protection)".
+5. outcb_N: only multiple entries if user names distinct/multiple circuits. Max 5.
 6. "standard distribution panel" with no detail at Standard/Detailed complexity -> include full default set.
+7. The supply and load should always be present on any complexity level unless user explicitly says "no loads" or "direct connection" or "no supply.
 """
 
         payload = {
-            "model": self.model,
-            "prompt": f"{system_prompt.strip()}\n\nUSER PROMPT:\n{prompt}\n\nJSON:",
-            "stream": False,
-            "options": {
-                "temperature": 0.0,
-                "top_p": 0.9,
-                "num_predict": 1024,
-                "num_ctx": 8192,
+                "model": self.model,
+                "prompt": f"{system_prompt.strip()}\n\nUSER PROMPT:\n{prompt}\n\nJSON:",
+                "stream": False,
+                "options": {
+                    "temperature": 0.0,
+                    "top_p": 0.9,
+                    "num_predict": 1024,
+                    "num_ctx": 8192,
+                }
             }
-        }
-        print(f'Parsing prompt using {self.model} | complexity={complexity}')
+
+        print(f"Parsing prompt using {self.model} | complexity={complexity}")
         response = requests.post(self.url, json=payload, timeout=90)
         response.raise_for_status()
+
         raw = response.json().get("response", "").strip()
+        json_obj = self._extract_json(raw)
 
-        # Try to find JSON in raw text BEFORE stripping think tags
-        # (qwen3 sometimes puts the answer inside the think block)
-        text = raw
+        if json_obj is None:
+            raise ValueError(f"Invalid or missing JSON output:\n{raw[:500]}")
 
-        # First pass: try full text
-        json_obj = self._extract_json(text)
-        if json_obj:
-            return json_obj
-
-        # Second pass: strip think blocks, try again
-        text_no_think = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-        json_obj = self._extract_json(text_no_think)
-        if json_obj:
-            return json_obj
-
-        # Third pass: extract from inside think block only
-        think_match = re.search(r'<think>(.*?)</think>', text, re.DOTALL)
-        if think_match:
-            json_obj = self._extract_json(think_match.group(1))
-            if json_obj:
-                return json_obj
-
-        raise ValueError(f"No JSON found in model output:\n{raw[:500]}")
+        return json_obj
+    
 
     def _extract_json(self, text: str) -> dict | None:
         """Try to extract and parse a JSON object from text. Returns dict or None."""
@@ -151,3 +139,33 @@ If the user says "no RCD", "no fault path", "no neutral", "no earth", "simple br
             return json.loads(text[start:end])
         except json.JSONDecodeError:
             return None
+        
+
+class GenerationWorker(QThread):
+    """Runs the blocking Ollama LLM call on a background thread."""
+    finished = Signal(dict)       # emits parsed_data on success
+    failed   = Signal(str)        # emits error message on failure
+
+    def __init__(self, prompt: str, complexity: str, generator):
+        super().__init__()
+        self.prompt     = prompt
+        self.complexity = complexity
+        self.generator  = generator   # MermaidGenerator instance (thread-safe reads only)
+
+    def run(self):
+        try:
+            ollama      = OllamaClient()
+            parsed_data = ollama.prompt_to_structured_data(self.prompt, self.complexity)
+
+            if not isinstance(parsed_data, dict) or "components" not in parsed_data:
+                raise ValueError("Invalid LLM output — missing components key")
+
+            # Normalise components to (id, label) tuples
+            parsed_data["components"] = [
+                (c[0], c[1]) if isinstance(c, (list, tuple)) and len(c) >= 2 else (str(c), str(c))
+                for c in parsed_data["components"]
+            ]
+            self.finished.emit(parsed_data)
+
+        except Exception as e:
+            self.failed.emit(str(e))

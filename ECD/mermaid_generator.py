@@ -30,7 +30,7 @@ class MermaidGenerator:
             "breaker": {
                 "en": [
                     "breaker", "mcb", "mccb", "protection", "circuit breaker", "main cb", "main breaker",
-                    "isolator", "isolating switch", "main switch", "rcd", "rcbo", "elcb",
+                    "isolator", "isolating switch", "main switch", "elcb",
                     "fuse", "fuse switch", "switch fuse", "acb", "vcb", "contactor",
                 ],
                 "ja": [
@@ -156,73 +156,86 @@ class MermaidGenerator:
             return "ja"
         return "en"
 
+
+    
+
     def parse_prompt(self, prompt_text, complexity_level="Neutral"):
         print('parsing prompt with hardcoded rules')
         if not prompt_text or not isinstance(prompt_text, str):
-            return {"components": self.get_default_components("en"), 
-                    "layout": "horizontal",
-                    "voltage": "230V / 415V", 
-                    "language": "en", 
-                    "complexity": complexity_level}
+            return {"components": self.get_default_components("en", "230V / 415V", "Standard"),
+                    "voltage": "230V / 415V", "language": "en", "complexity": complexity_level}
 
-        prompt = prompt_text.lower() if prompt_text else ""
-        language = self.detect_language(prompt_text) if prompt_text else "en"
+        exclusions = {
+            "rcd":  ["no rcd", "no residual", "no earth fault"],
+            "nbar": ["no neutral"],
+            "ebar": ["no earth", "no ground"],
+            "bus":  ["no busbar", "no bus"],
+        }
+        prompt_lower = prompt_text.lower()
+
+        # ✅ Assign BEFORE use
+        language = self.detect_language(prompt_text)
         voltage_text = "230V / 415V"
 
         try:
             for pattern in [r'(\d+)\s*[Vv]\s*[/／]?\s*(\d+)\s*[Vv]', r'(\d+)\s*[Vv]', r'(\d+)\s*volts?']:
-                m = re.search(pattern, prompt_text or "")
+                m = re.search(pattern, prompt_text)
                 if m:
                     voltage_text = f"{m.group(1)}V / {m.group(2)}V" if len(m.groups()) >= 2 else f"{m.group(1)}V"
                     break
         except Exception:
             pass
 
-    
+        # ✅ For Neutral mode, keyword-detect from prompt instead of using empty allowed list
+        if complexity_level == "Neutral":
+            KEYWORD_TO_COMPONENT = {
+                "supply":  ["supply", "mains", "source", "incoming", "grid"],
+                "maincb":  ["breaker", "mcb", "mccb", "circuit breaker", "main cb"],
+                "rcd":     ["rcd", "rcbo", "residual", "earth fault"],
+                "bus":     ["busbar", "bus bar", "bus-bar", "distribution"],
+                "nbar":    ["neutral bar", "neutral link", "n bar"],
+                "ebar":    ["earth bar", "earth terminal", "e bar"],
+                "loads":   ["load", "loads", "lighting", "socket", "appliance", "circuit"],
+            }
+            all_possible = self.get_default_components(language, voltage_text, "Standard")
+            all_possible_dict = dict(all_possible)
 
-        def check_keywords(category):
-            en_kws = self.keywords_map.get(category, {}).get("en", [])
-            ja_kws = self.keywords_map.get(category, {}).get("ja", [])
-            return any(k in prompt for k in en_kws) or any(k in prompt_text for k in ja_kws)
+            found_ids = []
+            for cid, keywords in KEYWORD_TO_COMPONENT.items():
+                if any(kw in prompt_lower for kw in keywords):
+                    if cid not in [ex for ex in exclusions if any(ex_kw in prompt_lower for ex_kw in exclusions.get(cid, []))]:
+                        found_ids.append(cid)
 
-        found_components = self.get_default_components(language, voltage_text, complexity_level)
-        comp_dict = dict(found_components)
-        # After keyword detection, inject required-but-missing components
-        # required_for_level = COMPLEXITY_LEVELS[complexity_level]["components"]
-        # found_ids = {cid for cid, _ in found_components}
+            # Always ensure supply and loads if detected; fallback to supply+maincb+loads minimum
+            if not found_ids:
+                found_ids = ["supply", "maincb", "loads"]
 
-        # for cid in required_for_level:
-        #     if cid not in found_ids and cid in self.components_map_by_id:
-        #         found_components.append((cid, self.components_map_by_id[cid][language]))
-        if "supply" in comp_dict:
-            comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(
-                "230V / 415V", voltage_text
-            )
-        # if check_keywords("incoming") and "supply" in comp_dict:
-        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
-        # if check_keywords("breaker") and "maincb" in comp_dict:
-        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
-        # if check_keywords("busbar") and "bus" in comp_dict:
-        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
-        # if check_keywords("neutral") and "nbar" in comp_dict:
-        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
-        # if check_keywords("earth") and "ebar" in comp_dict:
-        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
-        # if check_keywords("outgoing") and "outcb" in comp_dict:
-        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
-        # if check_keywords("load") and "loads" in comp_dict:
-        #     comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(...)
-
-        found_components = list(comp_dict.items())
-
-        # if not found_components:
-        #     found_components = self.get_default_components(language, voltage_text, complexity_level)
+            found_components = [
+                (cid, all_possible_dict[cid]) for cid in found_ids
+                if cid in all_possible_dict
+                and not any(ex in prompt_lower for ex in exclusions.get(cid, []))
+            ]
+        else:
+            # Non-Neutral: use the complexity level's allowed list
+            found_components = self.get_default_components(language, voltage_text, complexity_level)
+            comp_dict = dict(found_components)
+            if "supply" in comp_dict:
+                comp_dict["supply"] = self.components_map["main incoming supply"][language].replace(
+                    "230V / 415V", voltage_text
+                )
+            found_components = [
+                (cid, lbl) for cid, lbl in comp_dict.items()
+                if not any(ex in prompt_lower for ex in exclusions.get(cid, []))
+            ]
 
         return {"components": found_components, "voltage": voltage_text,
                 "language": language, "complexity": complexity_level}
 
     def get_default_components(self, language, voltage_text="230V / 415V", complexity_level="Standard"):
-        allowed_ids = COMPLEXITY_LEVELS[complexity_level]["components"]
+        level_cfg = COMPLEXITY_LEVELS[complexity_level]
+        allowed_ids = level_cfg["components"]  # outcb_N no longer in here for Detailed
+
+        # allowed_ids = COMPLEXITY_LEVELS[complexity_level]["components"]
         all_defaults = [
             ("supply", self.components_map["main incoming supply"][language].replace("230V / 415V", voltage_text)),
             ("maincb", self.components_map["main breaker"][language]),
@@ -232,10 +245,6 @@ class MermaidGenerator:
             ("ebar",   self.components_map["earth bar"][language]),
             ("loads",  self.components_map["load circuits"][language]),
         ]
-        # Dynamically add whichever outcb_N slots are listed in this complexity level
-        for cid in allowed_ids:
-            if cid.startswith("outcb_"):
-                all_defaults.insert(-1, (cid, self.components_map["outgoing mcbs"][language]))
 
         return [(cid, lbl) for cid, lbl in all_defaults if cid in allowed_ids]
 
@@ -254,11 +263,48 @@ class MermaidGenerator:
         complexity_cfg = COMPLEXITY_LEVELS.get(complexity, COMPLEXITY_LEVELS["Neutral"])
         llm_flags = parsed_data.get("flags", {})
 
+        # def _merge_flag(key):
+        #     complexity_val = complexity_cfg[key]
+        #     llm_val = llm_flags.get(key, None)
+        #     # OR: if complexity requires it, keep it; LLM can only add True
+        #     # return complexity_val or llm_val
+        #     if llm_val is not None:
+        #         return llm_val
+        #     return complexity_val
+
+        prompt_text = parsed_data.get("prompt", "")
+
+        EXPLICIT_ENABLE_KEYWORDS = {
+            "show_fault_paths":       ["fault path", "fault current", "earth fault path"],
+            "show_neutral":           ["neutral wire", "show neutral", "include neutral"],
+            "show_earth":             ["earth wire", "show earth", "include earth"],
+            "show_rcd":               ["rcd", "residual current", "earth fault protection"],
+            "show_protection_notes":  ["protection note", "show notes", "annotation"],
+        }
+
+        def _prompt_explicitly_enables(key, text):
+            t = text.lower()
+            return any(kw in t for kw in EXPLICIT_ENABLE_KEYWORDS.get(key, []))
+
         def _merge_flag(key):
             complexity_val = complexity_cfg[key]
-            llm_val = llm_flags.get(key, complexity_val)
-            # OR: if complexity requires it, keep it; LLM can only add True
-            return complexity_val or llm_val
+            llm_val = llm_flags.get(key, None)
+
+            # If complexity REQUIRES False (e.g. Simple hides fault paths),
+            # only override if the prompt explicitly asks for it
+            if complexity_val is False:
+                # Only allow True if LLM was explicitly instructed by prompt
+                # (prompt_text is stored in parsed_data["prompt"])
+                prompt_explicitly_requests = _prompt_explicitly_enables(key, prompt_text)
+                return True if prompt_explicitly_requests else False
+
+            # If complexity requires True, LLM cannot suppress it
+            if complexity_val is True:
+                return True
+
+            # Neutral / unset — LLM decides
+            return llm_val if llm_val is not None else complexity_val
+
 
         cfg = {
             "show_neutral":          _merge_flag("show_neutral"),
@@ -492,7 +538,10 @@ class MermaidGenerator:
         }
         key = key_texts.get(language, key_texts["en"])
 
-        escaped_mermaid = mermaid_code.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
+        # escaped_mermaid = mermaid_code.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
+
+        import html as _html
+        html_safe_mermaid = _html.escape(mermaid_code)
 
         editor_js = """
 <script>
@@ -1342,13 +1391,13 @@ body {{
     <div class="mermaid-wrap" id="diagram-root">
         <div id="mermaid-container">
             <div class="mermaid">
-{mermaid_code}
+{html_safe_mermaid}
             </div>
         </div>
     </div>
 
     <div class="code-panel-label">{key['code_label']}</div>
-    <textarea id="mermaid-code-editor" rows="10">{mermaid_code}</textarea>
+    <textarea id="mermaid-code-editor" rows="10">{html_safe_mermaid}</textarea>
     <div class="apply-row">
         <button id="apply-code-btn">▶ Apply (Ctrl+↵)</button>
         <span class="apply-hint">Ctrl+Enter to apply • diagram edits sync here</span>

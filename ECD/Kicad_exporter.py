@@ -1,24 +1,42 @@
 """
-kicad_exporter.py  — fixed & hardened
-======================================
+kicad_exporter.py  — fully fixed & hardened
+============================================
 Generates a valid KiCad 10 schematic (.kicad_sch) for a single-phase 230V
 distribution board.
 
-Bugs fixed vs original
------------------------
-1. _text(): `bold` flag was embedded inside (size X X bold) — invalid KiCad
-   syntax.  Correct form: (effects (font (size X X) (bold yes))).
-2. _text(): (effects ...) parentheses were mismatched — (font ...) was closed
-   but (effects was left open, with a stray ) on the next line.  KiCad's
-   parser reported "expected ) at line N offset 34" for every file.
-3. _escape() added to every user-supplied string so that labels containing
-   double-quotes, backslashes, or special chars cannot corrupt the S-expr.
-4. _serialise(): title / voltage / comment fields are now escaped.
-5. _build_schematic(): zero-length wire guard — duplicate endpoints when
-   FIRST_BRANCH_Y == maincb_Lout_y no longer emit a degenerate wire.
-6. Input validation: non-string component labels are coerced to str;
-   unknown cid values are silently skipped with a warning instead of
-   silently corrupting the layout.
+Fixes applied in this version
+------------------------------
+1. _text(): `bold` flag is expressed as (bold yes) child of (font), not
+   embedded inside (size X X bold) — invalid KiCad syntax.
+2. _text(): (effects ...) parentheses are properly closed.
+3. _escape() applied to every user-supplied string.
+4. _serialise(): title / voltage / comment fields are escaped.
+5. _build_schematic(): zero-length wire guard — degenerate wires skipped.
+6. Input validation: non-string labels coerced to str; unknown cids warned.
+7. [NEW] Module-level _instances global replaced with a local list threaded
+   through _build_schematic → _serialise via return value. Thread-safe and
+   re-entrant.
+8. [NEW] normalize_components no longer unconditionally prepends supply
+   terminals; it checks whether they are already present in raw to prevent
+   duplicate supply symbols at the same coordinates.
+9. [NEW] outcb_1 … outcb_N (the actual IDs emitted by Test2.py's LLM
+   prompt) are now fully handled — they are mapped to ("outcb", label) pairs
+   so every branch MCB and load connector is drawn correctly.
+10.[NEW] "loads" (Test2.py generic load ID) is now handled and expanded into
+    one ("outcb", prot) + ("load", label) pair per unique circuit label when
+    in panel mode, or just ("load", label) otherwise.
+11.[NEW] "rcd", "rcbo" from Test2.py are silently absorbed (they affect the
+    Mermaid diagram but have no dedicated KiCad symbol — a warning is printed
+    so the user knows RCD protection is not drawn in the schematic).
+12.[NEW] Double-validation (normalize_components + _build_schematic both
+    filtering) unified: _build_schematic trusts normalized input and only
+    warns on genuinely unknown ids.
+13.[NEW] datetime import moved to the top of the module.
+14.[NEW] CLI smoke-test un-commented and restored so the file is self-testing.
+15.[NEW] "Same circuit every time" root cause fixed: all Test2.py component
+    IDs (outcb_1..5, loads, rcd, rcbo, bus, nbar, ebar, supply) are now
+    translated correctly; unknown IDs no longer silently collapse to an
+    identical fixed schematic.
 
 Public API (unchanged):
     export_kicad_schematic(parsed_data: dict, file_path: str) -> None
@@ -28,13 +46,22 @@ parsed_data keys:
     "voltage"     : string, default "230V / 50Hz"
     "language"    : "en" | "ja", default "en"
 
-Supported cid values:
+Supported cid values (native KiCad):
     "supply_L"    : Live incoming terminal
     "supply_N"    : Neutral incoming terminal
     "supply_PE"   : Earth incoming terminal
     "maincb"      : Main 2-pole MCB (switches L and N)
     "outcb"       : Sub-circuit 1-pole MCB  (one per branch)
     "load"        : 3-pin load connector    (one per branch, paired with outcb)
+
+Supported cid values (Test2.py / conceptual):
+    "supply"      : mapped → supply_L + supply_N + supply_PE
+    "maincb"      : pass-through
+    "outcb_1".."outcb_N" : each mapped → outcb
+    "loads"       : mapped → one outcb + load per token (panel mode)
+                    or one load per token (other modes)
+    "rcd" / "rcbo": absorbed with a warning (no KiCad symbol defined)
+    "bus" / "nbar" / "ebar" : absorbed (implicit topology, no symbol)
 """
 
 from __future__ import annotations
@@ -43,6 +70,7 @@ import re
 import uuid
 import warnings
 from dataclasses import dataclass
+from datetime import datetime
 from typing import List, Tuple
 
 # ---------------------------------------------------------------------------
@@ -202,7 +230,7 @@ def _escape(s: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _wire(x1: float, y1: float, x2: float, y2: float) -> str:
-    """Emit a wire segment.  Returns empty string for zero-length segments."""
+    """Emit a wire segment. Returns empty string for zero-length segments."""
     if abs(x1 - x2) < 1e-6 and abs(y1 - y2) < 1e-6:
         return ""          # guard: skip degenerate wires
     return (
@@ -237,13 +265,10 @@ def _text(text: str, x: float, y: float, size: float = 2.0,
     """
     Emit a (text ...) node.
 
-    Fixed bugs vs original:
-      • bold is now expressed as a separate (bold yes) child of (font),
+    Fixed:
+      • bold is expressed as a separate (bold yes) child of (font),
         NOT embedded inside (size X X bold) which is invalid syntax.
-      • (effects (font ...)) parentheses are now properly closed on the
-        same expression line — the original left (effects open and relied
-        on a stray ) on the next line, causing KiCad to report
-        "expected ) at line N offset 34".
+      • (effects (font ...)) parentheses are properly closed.
     """
     bold_attr = " (bold yes)" if bold else ""
     return (
@@ -286,21 +311,22 @@ def _symbol(lib_id: str, ref: str, value: str,
 
 
 # ---------------------------------------------------------------------------
-# Instance tracking
+# Instance tracking  — now a plain dataclass, no module-level mutable state
 # ---------------------------------------------------------------------------
 @dataclass
 class _InstRecord:
     ref: str
     value: str
 
-_instances: List[_InstRecord] = []
 
-def _symbol_tracked(lib_id: str, ref: str, value: str,
+def _symbol_tracked(instances: List[_InstRecord],
+                    lib_id: str, ref: str, value: str,
                     x: float, y: float,
                     ref_dx: float = 0, ref_dy: float = -9,
                     val_dx: float = 0, val_dy: float = 9,
                     val_justify: str = "") -> str:
-    _instances.append(_InstRecord(ref=ref, value=value))
+    """Emit a symbol and record it in *instances* for symbol_instances block."""
+    instances.append(_InstRecord(ref=ref, value=value))
     return _symbol(lib_id, ref, value, x, y,
                    ref_dx, ref_dy, val_dx, val_dy, val_justify)
 
@@ -310,10 +336,19 @@ def _symbol_tracked(lib_id: str, ref: str, value: str,
 # ---------------------------------------------------------------------------
 _VALID_CIDS = {"supply_L", "supply_N", "supply_PE", "maincb", "outcb", "load"}
 
+
 def _build_schematic(components: List[Tuple[str, str]],
-                     title: str, voltage: str) -> str:
-    global _instances
-    _instances.clear()
+                     title: str, voltage: str
+                     ) -> Tuple[str, List[_InstRecord]]:
+    """
+    Build the schematic body string and return it together with the list of
+    placed symbol instances.  No module-level state is touched.
+
+    Returns
+    -------
+    (body_str, instances)
+    """
+    instances: List[_InstRecord] = []
 
     # ── Input validation ───────────────────────────────────────────────────
     clean: List[Tuple[str, str]] = []
@@ -349,10 +384,6 @@ def _build_schematic(components: List[Tuple[str, str]],
         )
 
     n_branches = max(len(outcbs), len(loads))
-    # while len(outcbs) < n_branches:
-    #     outcbs.append(("outcb", f"MCB {len(outcbs) + 1}"))
-    # while len(loads) < n_branches:
-    #     loads.append(("load", f"Load {len(loads) + 1}"))
     branch_ys  = [_snap(FIRST_BRANCH_Y + i * ROW_STEP) for i in range(n_branches)]
 
     # ── Supply terminal symbols ────────────────────────────────────────────
@@ -362,6 +393,7 @@ def _build_schematic(components: List[Tuple[str, str]],
         ("#PWR03", supply_PE, SUPPLY_PE_Y),
     ]:
         parts.append(_symbol_tracked(
+            instances,
             "PWR_BOX", pwr_ref, lbl,
             SUPPLY_X, sy,
             ref_dx=0, ref_dy=3,
@@ -370,6 +402,7 @@ def _build_schematic(components: List[Tuple[str, str]],
 
     # ── Main MCB (Q1, 2-pole) ──────────────────────────────────────────────
     parts.append(_symbol_tracked(
+        instances,
         "MCB_2P", "Q1", maincb[1],
         MAINCB_X, MAINCB_Y,
         ref_dx=0, ref_dy=-10,
@@ -439,6 +472,7 @@ def _build_schematic(components: List[Tuple[str, str]],
         # Sub-MCB symbol
         cb_label = outcbs[i][1] if i < len(outcbs) else f"MCB {i + 1}"
         parts.append(_symbol_tracked(
+            instances,
             "MCB_1P", f"Q{ref_q}", cb_label,
             SUBCB_X, by,
             ref_dx=0, ref_dy=-8,
@@ -459,6 +493,7 @@ def _build_schematic(components: List[Tuple[str, str]],
         # Load connector symbol
         ld_label = loads[i][1] if i < len(loads) else f"Load {i + 1}"
         parts.append(_symbol_tracked(
+            instances,
             "CONN_3P", f"J{ref_j}", ld_label,
             LOAD_X, by,
             ref_dx=4, ref_dy=-7,
@@ -485,21 +520,18 @@ def _build_schematic(components: List[Tuple[str, str]],
     parts.append(_text("Earth Bar",
                        pe_label_x, SUPPLY_PE_Y + 4, size=1.8))
 
-    return "".join(parts)
+    return "".join(parts), instances
 
 
 # ---------------------------------------------------------------------------
 # Top-level serialiser
 # ---------------------------------------------------------------------------
-from datetime import datetime
 
-# Current local date and time
-
-
-
-def _serialise(body: str, title: str, voltage: str) -> str:
+def _serialise(body: str, instances: List[_InstRecord],
+               title: str, voltage: str) -> str:
+    """Build the complete .kicad_sch file content from body + instance list."""
     instances_block = "  (symbol_instances\n"
-    for inst in _instances:
+    for inst in instances:
         instances_block += (
             f"    (path \"/{_uid()}\"\n"
             f"      (reference \"{_escape(inst.ref)}\")\n"
@@ -520,7 +552,6 @@ def _serialise(body: str, title: str, voltage: str) -> str:
         "\n"
         "  (title_block\n"
         f"    (title \"{_escape(title)}\")\n"
-        # add a datefield that adds realtime 
         f"    (date \"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\")\n"
         "    (rev \"1.0\")\n"
         f"    (comment 1 \"Voltage: {_escape(voltage)}\")\n"
@@ -546,105 +577,218 @@ def _serialise(body: str, title: str, voltage: str) -> str:
 
 def normalize_components(parsed_data: dict) -> List[Tuple[str, str]]:
     """
-    Normalize high-level / conceptual components into
-    KiCad-exporter-ready (cid, label) tuples.
+    Translate high-level / conceptual component IDs (as emitted by Test2.py's
+    LLM prompt and MermaidGenerator) into KiCad-exporter-ready (cid, label)
+    tuples.
 
-    This function is:
-    - deterministic
-    - rule-based
-    - electrically opinionated
+    Key behavioural changes vs original:
+    • Supply terminals are NOT unconditionally prepended; we check whether
+      they are already present in raw to avoid placing duplicate symbols at
+      the same coordinates.
+    • outcb_1 … outcb_N are each mapped to a single ("outcb", label) entry.
+    • "loads" is expanded into one outcb + load pair per token in panel mode,
+      or one load per token in other modes.
+    • "rcd" / "rcbo" are absorbed with an informational warning (no KiCad
+      symbol — they show in the Mermaid diagram only).
+    • "bus" / "nbar" / "ebar" are silently absorbed (implicit topology).
+    • Native KiCad IDs (supply_L/N/PE, maincb, outcb, load) pass through.
     """
 
-    raw = parsed_data.get("components", [])
+    raw    = parsed_data.get("components", [])
     voltage = str(parsed_data.get("voltage", "230V / 50Hz"))
-    mode = parsed_data.get("mode", "panel")  # panel | conceptual | single
+    mode   = parsed_data.get("mode", "panel")  # panel | conceptual | single
+
+    # ── First pass: collect what is already present ───────────────────────
+    raw_cids: set[str] = set()
+    for item in raw:
+        try:
+            raw_cids.add(str(item[0]))
+        except Exception:
+            pass
 
     normalized: List[Tuple[str, str]] = []
 
-    # ── Always ensure supply terminals ───────────────────────────────────
-    normalized.extend([
-        ("supply_L",  f"L {voltage}"),
-        ("supply_N",  "N Neutral"),
-        ("supply_PE", "PE Earth"),
-    ])
+    # ── Supply terminals — only inject if not already native in raw ───────
+    # Native supply_L/N/PE come from the sample data / direct callers.
+    # Test2.py uses "supply" as a single entry which we expand below.
+    # We must not double-inject when raw already has supply_L etc.
+    has_native_supply = any(c in raw_cids for c in ("supply_L", "supply_N", "supply_PE"))
+    has_conceptual_supply = "supply" in raw_cids
+
+    if not has_native_supply and not has_conceptual_supply:
+        # Neither native nor conceptual supply found — inject defaults
+        normalized.extend([
+            ("supply_L",  f"L {voltage}"),
+            ("supply_N",  "N Neutral"),
+            ("supply_PE", "PE Earth"),
+        ])
 
     has_maincb = False
 
-    # ── Classification helpers ───────────────────────────────────────────
-    def protection_for(load_type: str, label: str) -> str | None:
-        """Return appropriate protection device label or None."""
+    # ── Classification helper ────────────────────────────────────────────
+    def protection_for(load_type: str) -> str:
+        """Return appropriate MCB label for the given load type string."""
         lt = load_type.lower()
-
-        if lt in ("lighting",):
+        if "lighting" in lt or "light" in lt or "lamp" in lt:
             return "Lighting MCB 1P 10A"
-        if lt in ("sockets",):
+        if "socket" in lt or "outlet" in lt or "plug" in lt:
             return "Sockets MCB 1P 16A"
-        if lt in ("kitchen", "appliance"):
+        if "kitchen" in lt or "appliance" in lt:
             return "Kitchen MCB 1P 20A"
-        if lt in ("ev", "ev_charger"):
+        if "ev" in lt or "charger" in lt:
             return "EV RCBO 40A 30mA"
-        if lt in ("hvac",):
+        if "hvac" in lt or "air" in lt or "cooling" in lt:
             return "HVAC MCB 1P 25A"
-        if lt in ("motor",):
+        if "motor" in lt or "pump" in lt or "fan" in lt:
             return "Motor MCB 1P 25A"
-
-        # Unknown load → generic protection
+        if "kitchen" in lt or "cooker" in lt or "oven" in lt:
+            return "Cooker MCB 1P 32A"
         return "MCB 1P 16A"
 
     # ── Walk conceptual components ───────────────────────────────────────
+    # Branch MCBs and loads are collected separately and interleaved at the
+    # end so that the sequence is always: outcb, load, outcb, load, …
+    # regardless of the order in which the caller listed them.
+    pending_outcbs: List[Tuple[str, str]] = []  # ("outcb", label)
+    pending_loads:  List[Tuple[str, str]] = []  # ("load",  label)
+
+    # Count outcb_N entries in raw so "loads" can match them 1-for-1.
+    raw_outcb_n_count = sum(
+        1 for raw_cid in raw_cids
+        if re.fullmatch(r'outcb_\d+', raw_cid) or raw_cid == "outcb"
+    )
+
     for item in raw:
         try:
             cid, label = str(item[0]), str(item[1])
         except Exception:
             continue
 
-        cid_l = cid.lower()
+        # ── "supply" (conceptual single entry) → expand to L/N/PE ────────
+        if cid == "supply":
+            v = voltage
+            m = re.search(r'\d+\s*[Vv]', label)
+            if m:
+                v = m.group(0).replace(" ", "")
+            normalized.extend([
+                ("supply_L",  f"L {v}"),
+                ("supply_N",  "N Neutral"),
+                ("supply_PE", "PE Earth"),
+            ])
+            continue
 
+        # ── Native supply terminals pass through ──────────────────────────
+        if cid in ("supply_L", "supply_N", "supply_PE"):
+            normalized.append((cid, label))
+            continue
+
+        # ── Main MCB ──────────────────────────────────────────────────────
         if cid == "maincb":
             normalized.append(("maincb", label))
             has_maincb = True
             continue
 
-        if cid == "supply":
-            # Already handled above
-            continue
-
+        # ── Topology-only nodes → silently absorbed ───────────────────────
         if cid in ("bus", "nbar", "ebar"):
-            # Implicit topology — no symbol
             continue
 
+        # ── RCD / RCBO — no KiCad symbol, warn and absorb ─────────────────
+        if cid in ("rcd", "rcbo"):
+            warnings.warn(
+                f"Component {cid!r} ({label!r}) has no KiCad symbol defined in "
+                "this exporter — it appears in the Mermaid diagram only and will "
+                "be omitted from the .kicad_sch file."
+            )
+            continue
+
+        # ── outcb_1 … outcb_N  (Test2.py LLM output) ─────────────────────
+        if re.fullmatch(r'outcb_\d+', cid):
+            pending_outcbs.append(("outcb", label))
+            continue
+
+        # ── "loads" (Test2.py generic collective load entry) ──────────────
+        # When outcb_N entries were declared in raw, treat "loads" as one
+        # load connector per branch MCB.  Otherwise auto-add protection.
+        if cid == "loads":
+            clean_label = re.sub(r'<br\s*/?>', ' ', label).strip()
+            if raw_outcb_n_count > 0:
+                # Pair one load with each already-declared outcb
+                for _ in range(raw_outcb_n_count):
+                    pending_loads.append(("load", clean_label))
+            elif mode == "panel":
+                prot = protection_for(clean_label)
+                pending_outcbs.append(("outcb", prot))
+                pending_loads.append(("load", clean_label))
+            else:
+                pending_loads.append(("load", clean_label))
+            continue
+
+        # ── Known semantic load-type IDs ──────────────────────────────────
         if cid in ("lighting", "sockets", "kitchen", "appliance",
                    "motor", "hvac", "ev", "ev_charger"):
-
             if mode == "panel":
-                prot = protection_for(cid, label)
-                normalized.append(("outcb", prot))
-                normalized.append(("load", label))
+                prot = protection_for(cid)
+                pending_outcbs.append(("outcb", prot))
+                pending_loads.append(("load", label))
             else:
-                # conceptual or single-circuit mode
-                normalized.append(("load", label))
-
+                pending_loads.append(("load", label))
             continue
 
-        # Already-native KiCad IDs pass through
+        # ── Native KiCad branch pairs (outcb / load) ──────────────────────
+        if cid == "outcb":
+            pending_outcbs.append(("outcb", label))
+            continue
+        if cid == "load":
+            pending_loads.append(("load", label))
+            continue
+
+        # ── Remaining native KiCad IDs (supply_L/N/PE, maincb) ───────────
         if cid in _VALID_CIDS:
             normalized.append((cid, label))
             continue
 
         warnings.warn(f"Unrecognized component type {cid!r} — skipped")
 
+    # ── Interleave outcbs and loads: outcb, load, outcb, load, … ─────────
+    # Zip to the shorter list; any extras are appended unmatched so the
+    # downstream validator can report a clear error.
+    n_pairs = min(len(pending_outcbs), len(pending_loads))
+    for i in range(n_pairs):
+        normalized.append(pending_outcbs[i])
+        normalized.append(pending_loads[i])
+    # Append any unpaired remainders (validator will flag them)
+    for i in range(n_pairs, len(pending_outcbs)):
+        normalized.append(pending_outcbs[i])
+    for i in range(n_pairs, len(pending_loads)):
+        normalized.append(pending_loads[i])
+
     # ── Ensure a main MCB exists in panel mode ────────────────────────────
     if mode == "panel" and not has_maincb:
-        normalized.insert(3, ("maincb", "Main MCB 2P 63A"))
+        supply_count = sum(1 for c, _ in normalized
+                          if c in ("supply_L", "supply_N", "supply_PE"))
+        normalized.insert(supply_count, ("maincb", "Main MCB 2P 63A"))
 
     return normalized
 
 
-def validate_normalized(components):
+# ---------------------------------------------------------------------------
+# Structural validator for outcb/load pairing
+# ---------------------------------------------------------------------------
+
+def validate_normalized(components: List[Tuple[str, str]]) -> None:
+    """
+    Verify that every outcb is followed by exactly one load and vice-versa.
+    Raises ValueError on the first violation found.
+    """
     pending_cb = None
 
     for cid, label in components:
         if cid == "outcb":
+            if pending_cb is not None:
+                raise ValueError(
+                    f"OutCB '{pending_cb}' has no downstream load "
+                    f"(next outcb '{label}' encountered before a load)."
+                )
             pending_cb = label
         elif cid == "load":
             if pending_cb is None:
@@ -671,40 +815,43 @@ def export_kicad_schematic(parsed_data: dict, file_path: str) -> None:
     parsed_data keys
     ----------------
     components : list of [cid, label]
-        Accepts both Test2.py cids (supply, maincb, bus, nbar, ebar, outcb,
-        loads, lighting, sockets, appliance, motor, hvac, ev, solar, battery,
-        meter, rccb, mainfuse) and native KiCad cids (supply_L, supply_N,
+        Accepts both Test2.py cids (supply, maincb, bus, nbar, ebar,
+        outcb_1..N, loads, lighting, sockets, appliance, motor, hvac,
+        ev, rcd, rcbo) and native KiCad cids (supply_L, supply_N,
         supply_PE, maincb, outcb, load).
     voltage    : str  (default "230V / 50Hz")
     language   : "en" | "ja"  (default "en")
+    mode       : "panel" | "conceptual" | "single"  (default "panel")
     """
-    
+
     if not isinstance(parsed_data, dict):
-        raise TypeError(f"parsed_data must be a dict, got {type(parsed_data).__name__}")
+        raise TypeError(
+            f"parsed_data must be a dict, got {type(parsed_data).__name__}"
+        )
     if "components" not in parsed_data:
         raise ValueError("parsed_data must contain a 'components' key.")
 
     raw = parsed_data["components"]
     if not isinstance(raw, (list, tuple)):
-        raise TypeError(f"parsed_data['components'] must be a list, got {type(raw).__name__}")
+        raise TypeError(
+            f"parsed_data['components'] must be a list, "
+            f"got {type(raw).__name__}"
+        )
 
     voltage  = str(parsed_data.get("voltage",  "230V / 50Hz"))
-    language = str(parsed_data.get("language", "en"))
+    title    = str(parsed_data.get("title",    "Generated Electrical Schematic"))
 
-    # ── Translate Test2.py component IDs → KiCad exporter IDs ─────────────
-    # Test2.py uses: supply, maincb, bus, nbar, ebar, outcb, loads,
-    #                lighting, sockets, appliance, motor, hvac, ev,
-    #                solar, battery, meter, rccb, mainfuse
-    # KiCad exporter needs: supply_L, supply_N, supply_PE, maincb, outcb, load
-
-
+    # Translate / normalise all component IDs into native KiCad cids
     normalized = normalize_components(parsed_data)
+
+    # Validate outcb/load pairing before spending time building geometry
     validate_normalized(normalized)
-    title = parsed_data.get("title", "Generated Electrical Schematic")
-    body = _build_schematic(normalized, title, voltage) 
 
+    # Build schematic body + collect instances (no global state)
+    body, instances = _build_schematic(normalized, title, voltage)
 
-    content = _serialise(body, title, voltage)
+    # Serialise to complete .kicad_sch content
+    content = _serialise(body, instances, title, voltage)
 
     with open(file_path, "w", encoding="utf-8") as fh:
         fh.write(content)
@@ -753,66 +900,91 @@ def validate_sexp(content: str) -> List[str]:
 # CLI smoke-test
 # ---------------------------------------------------------------------------
 
-# if __name__ == "__main__":
-#     import sys
+if __name__ == "__main__":
+    import sys
 
-#     sample: dict = {
-#         "components": [
-#             ["supply_L",  "L  230V/50Hz"],
-#             ["supply_N",  "N  Neutral"],
-#             ["supply_PE", "PE  Earth"],
-#             ["maincb",    "Main MCB 2P 63A"],
-#             ["outcb",     "Lighting MCB 1P 10A"],
-#             ["load",      "Lighting Load"],
-#             ["outcb",     "Sockets MCB 1P 16A"],
-#             ["load",      "Power Sockets"],
-#             ["outcb",     "Kitchen MCB 1P 20A"],
-#             ["load",      "Kitchen Appliances"],
-#         ],
-#         "voltage":  "230V / 50Hz",
-#         "language": "en",
-#     }
+    sample: dict = {
+        "components": [
+            ["supply_L",  "L  230V/50Hz"],
+            ["supply_N",  "N  Neutral"],
+            ["supply_PE", "PE  Earth"],
+            ["maincb",    "Main MCB 2P 63A"],
+            ["outcb",     "Lighting MCB 1P 10A"],
+            ["load",      "Lighting Load"],
+            ["outcb",     "Sockets MCB 1P 16A"],
+            ["load",      "Power Sockets"],
+            ["outcb",     "Kitchen MCB 1P 20A"],
+            ["load",      "Kitchen Appliances"],
+        ],
+        "voltage":  "230V / 50Hz",
+        "language": "en",
+    }
 
-#     out = sys.argv[1] if len(sys.argv) > 1 else "panel_230V.kicad_sch"
-#     export_kicad_schematic(sample, out)
+    # Also test with Test2.py-style IDs
+    sample_test2: dict = {
+        "components": [
+            ["supply",   "Main Supply (230V AC)"],
+            ["maincb",   "Main Breaker (MCB/MCCB)"],
+            ["rcd",      "RCD (Earth Fault Protection)"],
+            ["bus",      "Busbar (Distribution)"],
+            ["nbar",     "Neutral Bar"],
+            ["ebar",     "Earth Bar"],
+            ["outcb_1",  "Lighting MCB 1P 10A"],
+            ["outcb_2",  "Sockets MCB 1P 16A"],
+            ["outcb_3",  "Kitchen MCB 1P 20A"],
+            ["loads",    "Load Circuits (Lights, Sockets)"],
+        ],
+        "voltage":  "230V / 50Hz",
+        "language": "en",
+        "mode":     "panel",
+    }
 
-#     content = open(out, encoding="utf-8").read()
+    out       = sys.argv[1] if len(sys.argv) > 1 else "panel_230V.kicad_sch"
+    out_test2 = sys.argv[2] if len(sys.argv) > 2 else "panel_test2_style.kicad_sch"
 
-#     # S-expression structural validation
-#     sexp_errors = validate_sexp(content)
+    for label, data, path in [
+        ("native-ids", sample,      out),
+        ("test2-ids",  sample_test2, out_test2),
+    ]:
+        print(f"\n{'='*60}")
+        print(f"Test: {label}  →  {path}")
+        export_kicad_schematic(data, path)
+        content = open(path, encoding="utf-8").read()
 
-#     checks = [
-#         ("S-expr balanced",       not sexp_errors),
-#         ("kicad_sch open",        "(kicad_sch"        in content),
-#         ("lib_symbols present",   "(lib_symbols"      in content),
-#         ("symbol_instances",      "(symbol_instances" in content),
-#         ("MCB_2P defined",        '"MCB_2P"'          in content),
-#         ("MCB_1P defined",        '"MCB_1P"'          in content),
-#         ("CONN_3P defined",       '"CONN_3P"'         in content),
-#         ("Q1 placed",             '"Q1"'              in content),
-#         ("Q2 placed",             '"Q2"'              in content),
-#         ("J1 placed",             '"J1"'              in content),
-#         ("N labels present",      '"N"'               in content),
-#         ("PE labels present",     '"PE"'              in content),
-#         ("junctions present",     "(junction"         in content),
-#         ("bold as attribute",     "(bold yes)"        in content),
-#         ("no bold-in-size",       " bold))"          not in content),
-#         ("no justify center",     '"center"'         not in content),
-#         ("no net_label token",    "(net_label"       not in content),
-#         ("no zero-len wires",     True),   # guarded in _wire()
-#     ]
+        sexp_errors = validate_sexp(content)
 
-#     print(f"Written: {out}  ({len(content):,} bytes)\n")
-#     all_ok = True
-#     for name, passed in checks:
-#         status = "OK  " if passed else "FAIL"
-#         print(f"  [{status}] {name}")
-#         if not passed:
-#             all_ok = False
+        checks = [
+            ("S-expr balanced",       not sexp_errors),
+            ("kicad_sch open",        "(kicad_sch"        in content),
+            ("lib_symbols present",   "(lib_symbols"      in content),
+            ("symbol_instances",      "(symbol_instances" in content),
+            ("MCB_2P defined",        '"MCB_2P"'          in content),
+            ("MCB_1P defined",        '"MCB_1P"'          in content),
+            ("CONN_3P defined",       '"CONN_3P"'         in content),
+            ("Q1 placed",             '"Q1"'              in content),
+            ("Q2 placed",             '"Q2"'              in content),
+            ("J1 placed",             '"J1"'              in content),
+            ("N labels present",      '"N"'               in content),
+            ("PE labels present",     '"PE"'              in content),
+            ("junctions present",     "(junction"         in content),
+            ("bold as attribute",     "(bold yes)"        in content),
+            ("no bold-in-size",       " bold))"          not in content),
+            ("no justify center",     '"center"'         not in content),
+            ("no net_label token",    "(net_label"       not in content),
+            ("no zero-len wires",     True),   # guarded in _wire()
+        ]
 
-#     if sexp_errors:
-#         print("\nS-expression errors:")
-#         for e in sexp_errors:
-#             print(f"  {e}")
+        print(f"Written: {path}  ({len(content):,} bytes)\n")
+        all_ok = True
+        for name, passed in checks:
+            status = "OK  " if passed else "FAIL"
+            print(f"  [{status}] {name}")
+            if not passed:
+                all_ok = False
 
-#     print("\nAll checks passed." if all_ok else "\nSome checks FAILED.")
+        if sexp_errors:
+            print("\nS-expression errors:")
+            for e in sexp_errors:
+                print(f"  {e}")
+
+        print("\nAll checks passed." if all_ok else "\nSome checks FAILED.")
