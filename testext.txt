@@ -1,0 +1,33 @@
+Main supply, breaker, busbar at 415V
+
+Basic Residential / Commercial Circuits
+“Draw a single-phase 230V residential electrical distribution diagram with main MCB, RCCB, separate MCBs for lighting, socket outlets, and kitchen appliances, including proper earthing.”
+“Generate a basic lighting circuit diagram with one switch controlling one lamp, using phase, neutral, and earth connections.”
+“Create a power socket wiring diagram with a 16A MCB, socket outlet, and earthing for a single room.”
+
+🔹 Protection & Safety Focused Circuits
+“Design an electrical circuit diagram showing surge protection device (SPD), RCCB, MCBs, and earthing for a single-phase 230V supply.”
+“Draw a fault-protected distribution board diagram with RCCB, overcurrent protection, and separate neutral and earth bars.”
+“Generate an electrical schematic illustrating short-circuit and overload protection using MCBs.”
+
+🔹 Control & Automation Circuits
+“Create a motor control circuit diagram using a contactor, thermal overload relay, start and stop push buttons.”
+“Draw a ladder diagram for automatic motor start-stop control with overload protection.”
+“Generate a control circuit for a water pump with float switch, relay, and manual override switch.”
+
+🔹 Industrial / Three-Phase Systems
+“Design a three-phase power distribution diagram with main MCCB, individual MCBs, contactors, and proper earthing.”
+“Draw a star-delta starter circuit diagram for a three-phase induction motor.”
+“Create an industrial panel wiring diagram showing control power supply, PLC input/output modules, relays, and terminal blocks.”
+
+🔹 Smart / AI-Assisted & Advanced Systems
+“Generate an electrical circuit diagram for a smart home system with lighting control via relays and a central controller.”
+“Draw a schematic for an energy monitoring system using current transformers (CTs), voltage sensing, and a microcontroller.”
+“Create a modular electrical system diagram that can be automatically expanded by AI to add new circuits.”
+
+🔹 KiCad-Specific Prompts (Very Useful for You)
+“Convert this electrical distribution description into a valid KiCad schematic (.kicad_sch) with correct symbols, nets, junctions, and title block.”
+“Generate a KiCad schematic for a single-phase 230V distribution board using standard IEC symbols and proper net naming.”
+🔹 Documentation & Reporting Style Prompts
+“Generate a clean, professional electrical schematic suitable for academic reporting and safety review.”
+“Draw an electrical circuit diagram and also provide a short functional explanation for each component.”

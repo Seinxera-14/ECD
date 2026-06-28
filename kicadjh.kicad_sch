@@ -1,0 +1,573 @@
+(kicad_sch
+  (version 20240101)
+  (generator "eeschema")
+  (generator_version "10.0")
+  (uuid "3a69d749-faf0-4539-ab3e-916020c3897d")
+  (paper "A3")
+
+  (title_block
+    (title "Generated Electrical Schematic")
+    (date "2026-05-18 10:50:40")
+    (rev "1.0")
+    (comment 1 "Voltage: 230V AC")
+    (comment 2 "L=Live  N=Neutral  PE=Protective Earth")
+  )
+
+  (lib_symbols
+
+    (symbol "PWR_BOX"
+      (pin_names hide)
+      (in_bom yes)
+      (on_board yes)
+      (property "Reference" "#PWR" (at 0 -3 0)
+        (effects (font (size 1.5 1.5)) hide))
+      (property "Value" "PWR" (at 0 3.5 0)
+        (effects (font (size 2.2 2.2))))
+      (symbol "PWR_BOX_0_1"
+        (rectangle (start -1.5 -1.5) (end 1.5 1.5)
+          (stroke (width 0.25)) (fill (type background)))
+        (pin power_in line (at -5.08 0 0) (length 3.58)
+          (name "~" (effects (font (size 1.5 1.5))))
+          (number "1" (effects (font (size 1.5 1.5)))))
+      )
+    )
+
+    (symbol "MCB_2P"
+      (pin_names hide)
+      (in_bom yes)
+      (on_board yes)
+      (property "Reference" "Q" (at 0 -8 0)
+        (effects (font (size 2.2 2.2))))
+      (property "Value" "MCB_2P" (at 0 8 0)
+        (effects (font (size 1.8 1.8))))
+      (symbol "MCB_2P_0_1"
+        (polyline (pts (xy -4 -2.54) (xy -2.5 -2.54)) (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy  2.5 -2.54) (xy  4 -2.54))  (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy -2.5 -2.54) (xy  2.5  0.5)) (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy -4  2.54) (xy -2.5  2.54))  (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy  2.5  2.54) (xy  4  2.54))  (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy -2.5  2.54) (xy  2.5  5.5)) (stroke (width 0.25)) (fill (type none)))
+        (circle (center 0 -2.54) (radius 0.6) (stroke (width 0.25)) (fill (type none)))
+        (circle (center 0  2.54) (radius 0.6) (stroke (width 0.25)) (fill (type none)))
+        (pin input line (at -7.62 -2.54 0) (length 3.62)
+          (name "L_IN"  (effects (font (size 1.5 1.5))))
+          (number "1"   (effects (font (size 1.5 1.5)))))
+        (pin output line (at 7.62 -2.54 180) (length 3.62)
+          (name "L_OUT" (effects (font (size 1.5 1.5))))
+          (number "2"   (effects (font (size 1.5 1.5)))))
+        (pin input line (at -7.62 2.54 0) (length 3.62)
+          (name "N_IN"  (effects (font (size 1.5 1.5))))
+          (number "3"   (effects (font (size 1.5 1.5)))))
+        (pin output line (at 7.62 2.54 180) (length 3.62)
+          (name "N_OUT" (effects (font (size 1.5 1.5))))
+          (number "4"   (effects (font (size 1.5 1.5)))))
+      )
+    )
+
+    (symbol "MCB_1P"
+      (pin_names hide)
+      (in_bom yes)
+      (on_board yes)
+      (property "Reference" "Q" (at 0 -7 0)
+        (effects (font (size 2.2 2.2))))
+      (property "Value" "MCB_1P" (at 0 7 0)
+        (effects (font (size 1.8 1.8))))
+      (symbol "MCB_1P_0_1"
+        (polyline (pts (xy -4 0) (xy -2.5 0))   (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy  2.5 0) (xy  4 0))   (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy -2.5 0) (xy  2.5 3)) (stroke (width 0.25)) (fill (type none)))
+        (circle (center 0 0) (radius 0.6) (stroke (width 0.25)) (fill (type none)))
+        (pin input line (at -7.62 0 0) (length 3.62)
+          (name "IN"  (effects (font (size 1.5 1.5))))
+          (number "1" (effects (font (size 1.5 1.5)))))
+        (pin output line (at 7.62 0 180) (length 3.62)
+          (name "OUT" (effects (font (size 1.5 1.5))))
+          (number "2" (effects (font (size 1.5 1.5)))))
+      )
+    )
+
+    (symbol "CONN_3P"
+      (pin_names hide)
+      (in_bom yes)
+      (on_board yes)
+      (property "Reference" "J" (at 3.5 -6 0)
+        (effects (font (size 2.2 2.2)) (justify left)))
+      (property "Value" "CONN_3P" (at 3.5 6 0)
+        (effects (font (size 1.8 1.8)) (justify left)))
+      (symbol "CONN_3P_0_1"
+        (rectangle (start -1.5 -3.8) (end 1.5 3.8)
+          (stroke (width 0.25)) (fill (type background)))
+        (pin passive line (at -5.08  2.54 0) (length 3.58)
+          (name "L"  (effects (font (size 1.5 1.5))))
+          (number "1" (effects (font (size 1.5 1.5)))))
+        (pin passive line (at -5.08  0    0) (length 3.58)
+          (name "N"  (effects (font (size 1.5 1.5))))
+          (number "2" (effects (font (size 1.5 1.5)))))
+        (pin passive line (at -5.08 -2.54 0) (length 3.58)
+          (name "PE" (effects (font (size 1.5 1.5))))
+          (number "3" (effects (font (size 1.5 1.5)))))
+      )
+    )
+
+  )
+
+  (symbol
+    (lib_id "PWR_BOX")
+    (at 40.6400 71.1200 0)
+    (unit 1)
+    (uuid "0b36ea84-b07d-47ab-9929-eaa57cbf00e1")
+    (property "Reference" "#PWR01"
+      (at 40.6400 73.6600 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "L 230V"
+      (at 40.6400 66.0400 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 40.6400 71.1200 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 40.6400 71.1200 0)
+      (effects hide)
+    )
+  )
+  (symbol
+    (lib_id "PWR_BOX")
+    (at 40.6400 104.1400 0)
+    (unit 1)
+    (uuid "29d7eed2-534d-4815-8fa2-683a42d9389c")
+    (property "Reference" "#PWR02"
+      (at 40.6400 109.2200 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "N Neutral"
+      (at 40.6400 101.6000 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 40.6400 104.1400 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 40.6400 104.1400 0)
+      (effects hide)
+    )
+  )
+  (symbol
+    (lib_id "PWR_BOX")
+    (at 40.6400 124.4600 0)
+    (unit 1)
+    (uuid "f857cf23-5fe9-4b56-9166-4d19fad3bedd")
+    (property "Reference" "#PWR03"
+      (at 40.6400 127.0000 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "PE Earth"
+      (at 40.6400 121.9200 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 40.6400 124.4600 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 40.6400 124.4600 0)
+      (effects hide)
+    )
+  )
+  (symbol
+    (lib_id "MCB_2P")
+    (at 78.7400 78.7400 0)
+    (unit 1)
+    (uuid "a12776f4-05ee-41a7-93ba-59b921eb4705")
+    (property "Reference" "Q1"
+      (at 78.7400 68.5800 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Main Circuit Breaker"
+      (at 78.7400 86.3600 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 78.7400 78.7400 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 78.7400 78.7400 0)
+      (effects hide)
+    )
+  )
+  (wire
+    (pts (xy 40.6400 71.1200) (xy 71.1200 71.1200))
+    (stroke (width 0.25) (type default))
+    (uuid "2bf6094b-efb0-4e47-bc77-d9b3a2e33a8b")
+  )
+  (wire
+    (pts (xy 71.1200 71.1200) (xy 71.1200 76.2000))
+    (stroke (width 0.25) (type default))
+    (uuid "66ac9417-707f-4a66-b53f-4618aad28552")
+  )
+  (wire
+    (pts (xy 40.6400 104.1400) (xy 71.1200 104.1400))
+    (stroke (width 0.25) (type default))
+    (uuid "2d538e58-b1ba-48ef-95ea-b89af213416e")
+  )
+  (wire
+    (pts (xy 71.1200 104.1400) (xy 71.1200 81.2800))
+    (stroke (width 0.25) (type default))
+    (uuid "81b2e0d2-f8b0-4925-a319-fbe059aee938")
+  )
+  (wire
+    (pts (xy 86.3600 76.2000) (xy 119.3800 76.2000))
+    (stroke (width 0.25) (type default))
+    (uuid "68a7de1a-d8e7-47c0-ba6e-7a2256940ccd")
+  )
+  (wire
+    (pts (xy 119.3800 76.2000) (xy 119.3800 66.0400))
+    (stroke (width 0.25) (type default))
+    (uuid "1d417fad-35c4-4078-a5ad-ed5274c705b2")
+  )
+  (wire
+    (pts (xy 119.3800 66.0400) (xy 119.3800 109.2200))
+    (stroke (width 0.25) (type default))
+    (uuid "b5202b95-f201-44f1-ad4d-752002e97adb")
+  )
+  (wire
+    (pts (xy 86.3600 81.2800) (xy 91.4400 81.2800))
+    (stroke (width 0.25) (type default))
+    (uuid "d25be5c8-f116-4aab-ab87-fabc8c44ec3d")
+  )
+  (label "N"
+    (at 91.4400 81.2800 0)
+    (effects (font (size 2 2)))
+    (uuid "c33d46a3-30cf-4c2b-989f-9a33fcf45040")
+  )
+  (wire
+    (pts (xy 40.6400 124.4600) (xy 45.7200 124.4600))
+    (stroke (width 0.25) (type default))
+    (uuid "cd24bf46-a384-4203-8e29-9ccce0f13635")
+  )
+  (label "PE"
+    (at 45.7200 124.4600 0)
+    (effects (font (size 2 2)))
+    (uuid "bae0ee0f-4cc4-4937-864f-b5d2003b1617")
+  )
+  (junction
+    (at 119.3800 66.0400)
+    (diameter 0)
+    (color 0 0 0 0)
+    (uuid "688b864f-f161-4c61-8fd1-85f78992d6b8")
+  )
+  (wire
+    (pts (xy 119.3800 66.0400) (xy 152.4000 66.0400))
+    (stroke (width 0.25) (type default))
+    (uuid "95aa328b-d25f-4485-b6bd-528572d0a114")
+  )
+  (symbol
+    (lib_id "MCB_1P")
+    (at 160.0200 66.0400 0)
+    (unit 1)
+    (uuid "45455830-8c30-4242-bf73-f7da0f293c30")
+    (property "Reference" "Q2"
+      (at 160.0200 58.4200 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Lighting Circuit Breaker"
+      (at 160.0200 73.6600 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 160.0200 66.0400 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 160.0200 66.0400 0)
+      (effects hide)
+    )
+  )
+  (wire
+    (pts (xy 167.6400 66.0400) (xy 215.9000 66.0400))
+    (stroke (width 0.25) (type default))
+    (uuid "415a2820-2f67-4be3-a6bf-a7f3f3326de9")
+  )
+  (wire
+    (pts (xy 215.9000 66.0400) (xy 215.9000 68.5800))
+    (stroke (width 0.25) (type default))
+    (uuid "07cb9c05-09ea-4bed-bbe2-38acb8ece477")
+  )
+  (symbol
+    (lib_id "CONN_3P")
+    (at 220.9800 66.0400 0)
+    (unit 1)
+    (uuid "46dbb2a4-ea2e-4ba1-a4c3-dce565e0868f")
+    (property "Reference" "J1"
+      (at 223.5200 58.4200 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Load Circuits"
+      (at 223.5200 73.6600 0)
+      (effects (font (size 1.8 1.8)) (justify left))
+    )
+    (property "Footprint" ""
+      (at 220.9800 66.0400 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 220.9800 66.0400 0)
+      (effects hide)
+    )
+  )
+  (label "N"
+    (at 213.3600 66.0400 180)
+    (effects (font (size 2 2)))
+    (uuid "f80f51f3-38b7-473e-8a45-82b58dfe999a")
+  )
+  (label "PE"
+    (at 213.3600 63.5000 180)
+    (effects (font (size 2 2)))
+    (uuid "15bc3baf-fc8a-4575-95b8-e3cab014fb6d")
+  )
+  (junction
+    (at 119.3800 86.3600)
+    (diameter 0)
+    (color 0 0 0 0)
+    (uuid "072c851e-c1d4-4b71-9841-cb53ae6573d0")
+  )
+  (wire
+    (pts (xy 119.3800 86.3600) (xy 152.4000 86.3600))
+    (stroke (width 0.25) (type default))
+    (uuid "a4732434-561e-4596-9a84-80bc1b481d26")
+  )
+  (symbol
+    (lib_id "MCB_1P")
+    (at 160.0200 86.3600 0)
+    (unit 1)
+    (uuid "10fda435-769b-491a-83e6-9bac8385482f")
+    (property "Reference" "Q3"
+      (at 160.0200 78.7400 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Power Sockets Circuit Breaker"
+      (at 160.0200 93.9800 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 160.0200 86.3600 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 160.0200 86.3600 0)
+      (effects hide)
+    )
+  )
+  (wire
+    (pts (xy 167.6400 86.3600) (xy 215.9000 86.3600))
+    (stroke (width 0.25) (type default))
+    (uuid "2bbba642-56e9-4f38-baf2-4103be1bcd11")
+  )
+  (wire
+    (pts (xy 215.9000 86.3600) (xy 215.9000 88.9000))
+    (stroke (width 0.25) (type default))
+    (uuid "09a6bb10-eec0-404b-93e9-1022b4133106")
+  )
+  (symbol
+    (lib_id "CONN_3P")
+    (at 220.9800 86.3600 0)
+    (unit 1)
+    (uuid "fedd1b2b-284f-4418-8383-b0f3dba5d6d8")
+    (property "Reference" "J2"
+      (at 223.5200 78.7400 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Load Circuits"
+      (at 223.5200 93.9800 0)
+      (effects (font (size 1.8 1.8)) (justify left))
+    )
+    (property "Footprint" ""
+      (at 220.9800 86.3600 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 220.9800 86.3600 0)
+      (effects hide)
+    )
+  )
+  (label "N"
+    (at 213.3600 86.3600 180)
+    (effects (font (size 2 2)))
+    (uuid "09091c46-dfa7-4ea7-a81d-03acf3254414")
+  )
+  (label "PE"
+    (at 213.3600 83.8200 180)
+    (effects (font (size 2 2)))
+    (uuid "befa44ba-17b3-4f2c-8cd9-11e6bd60f6b8")
+  )
+  (junction
+    (at 119.3800 109.2200)
+    (diameter 0)
+    (color 0 0 0 0)
+    (uuid "3644b8a6-a303-425e-b9ce-583d0ba744f7")
+  )
+  (wire
+    (pts (xy 119.3800 109.2200) (xy 152.4000 109.2200))
+    (stroke (width 0.25) (type default))
+    (uuid "f7815414-278b-4927-be7b-6cb4bd777520")
+  )
+  (symbol
+    (lib_id "MCB_1P")
+    (at 160.0200 109.2200 0)
+    (unit 1)
+    (uuid "708286c9-3cc6-4d78-b16b-39b75ae209e6")
+    (property "Reference" "Q4"
+      (at 160.0200 101.6000 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Kitchen Appliances Circuit Breaker"
+      (at 160.0200 116.8400 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 160.0200 109.2200 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 160.0200 109.2200 0)
+      (effects hide)
+    )
+  )
+  (wire
+    (pts (xy 167.6400 109.2200) (xy 215.9000 109.2200))
+    (stroke (width 0.25) (type default))
+    (uuid "58c72068-f86f-45bc-97e6-b7d00f9ee7ae")
+  )
+  (wire
+    (pts (xy 215.9000 109.2200) (xy 215.9000 111.7600))
+    (stroke (width 0.25) (type default))
+    (uuid "053fe7bb-14cf-4498-9ba7-158ce2585bc5")
+  )
+  (symbol
+    (lib_id "CONN_3P")
+    (at 220.9800 109.2200 0)
+    (unit 1)
+    (uuid "5c725e7a-b782-4ca1-b5cd-109126cbcef7")
+    (property "Reference" "J3"
+      (at 223.5200 101.6000 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Load Circuits"
+      (at 223.5200 116.8400 0)
+      (effects (font (size 1.8 1.8)) (justify left))
+    )
+    (property "Footprint" ""
+      (at 220.9800 109.2200 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 220.9800 109.2200 0)
+      (effects hide)
+    )
+  )
+  (label "N"
+    (at 213.3600 109.2200 180)
+    (effects (font (size 2 2)))
+    (uuid "6477192e-0b58-4da4-bf63-179704c50fe8")
+  )
+  (label "PE"
+    (at 213.3600 106.6800 180)
+    (effects (font (size 2 2)))
+    (uuid "4216b73a-95a0-45e8-b600-3f2b1bdcc023")
+  )
+  (text "230V AC Single-Phase Distribution Board"
+    (at 147.3200 27.9400 0)
+    (effects (font (size 4.5 4.5) (bold yes)))
+  )
+  (text "Incoming Supply"
+    (at 40.6400 55.8800 0)
+    (effects (font (size 2.2 2.2) (bold yes)))
+  )
+  (text "230V AC"
+    (at 40.6400 58.4200 0)
+    (effects (font (size 1.8 1.8)))
+  )
+  (text "Live Bus"
+    (at 121.9200 55.8800 0)
+    (effects (font (size 1.8 1.8)))
+  )
+  (text "Neutral Bar"
+    (at 91.4400 83.8200 0)
+    (effects (font (size 1.8 1.8)))
+  )
+  (text "Earth Bar"
+    (at 45.7200 129.5400 0)
+    (effects (font (size 1.8 1.8)))
+  )
+
+  (symbol_instances
+    (path "/bb1c9233-d6b8-45fa-811b-5c8ef3ea053b"
+      (reference "#PWR01")
+      (unit 1)
+      (value "L 230V")
+      (footprint "")
+    )
+    (path "/5e7e8e3c-6a4c-4802-81a9-fdb7898c6f0c"
+      (reference "#PWR02")
+      (unit 1)
+      (value "N Neutral")
+      (footprint "")
+    )
+    (path "/060c5902-a3e2-4011-9676-9f070fbbe5f9"
+      (reference "#PWR03")
+      (unit 1)
+      (value "PE Earth")
+      (footprint "")
+    )
+    (path "/eead661f-5089-4231-b70c-f3aa6d1d671f"
+      (reference "Q1")
+      (unit 1)
+      (value "Main Circuit Breaker")
+      (footprint "")
+    )
+    (path "/d9923388-d6e1-40c9-aafa-087c6110c05e"
+      (reference "Q2")
+      (unit 1)
+      (value "Lighting Circuit Breaker")
+      (footprint "")
+    )
+    (path "/d4509ac7-49bd-40d2-b60c-404300de8c44"
+      (reference "J1")
+      (unit 1)
+      (value "Load Circuits")
+      (footprint "")
+    )
+    (path "/5ab9e462-c24c-4876-9f3d-87a204328593"
+      (reference "Q3")
+      (unit 1)
+      (value "Power Sockets Circuit Breaker")
+      (footprint "")
+    )
+    (path "/3bd9d908-01f4-4f4b-a2a1-a83048176b07"
+      (reference "J2")
+      (unit 1)
+      (value "Load Circuits")
+      (footprint "")
+    )
+    (path "/43993ff9-dad3-410d-96df-cecd5b5d5863"
+      (reference "Q4")
+      (unit 1)
+      (value "Kitchen Appliances Circuit Breaker")
+      (footprint "")
+    )
+    (path "/8e9eb5bf-1034-4de8-b124-09ede9dc66c5"
+      (reference "J3")
+      (unit 1)
+      (value "Load Circuits")
+      (footprint "")
+    )
+  )
+
+  (sheet_instances
+    (path "/" (page "1"))
+  )
+)

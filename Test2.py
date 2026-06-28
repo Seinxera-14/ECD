@@ -1,6 +1,5 @@
 import sys
 import re
-
 from typer.cli import app
 from PySide6.QtWidgets import *
 from PySide6.QtCore import *
@@ -11,6 +10,7 @@ from PySide6.QtWebEngineCore import QWebEnginePage
 import json
 import requests
 from Kicad_exporter import export_kicad_schematic
+from dxf_generator import mermaid_to_dxf, export_dxf
 
 
 
@@ -3254,6 +3254,7 @@ class MainWindow(QMainWindow):
             ("Export as PDF",                self.export_as_pdf),
             ("Download Mermaid Code (.mmd)", self.download_mermaid_code),
             ("Export as KiCad Schematic",    self.export_as_kicad),   
+            ("Export as DXF",                self.export_as_dxf),
 
         ]:
             a = QAction(label, self); a.triggered.connect(slot); exp.addAction(a)
@@ -3374,6 +3375,9 @@ class MainWindow(QMainWindow):
         except RuntimeError:
             pass  # No connections yet
 
+
+
+
         page_layout = QPageLayout(
             QPageSize(QPageSize.PageSizeId.A4),
             QPageLayout.Orientation.Landscape,
@@ -3459,6 +3463,31 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Save Error", str(e))
 
+    def export_as_dxf(self):
+        """Export current diagram as a DXF single-line diagram (.dxf)."""
+        if not self._require_diagram("export"):
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export DXF Diagram",
+            "diagram.dxf",
+            "DXF Files (*.dxf);;All Files (*)"
+        )
+        if not path:
+            return
+
+        try:
+            # ✅ Use parsed_data directly — avoids re-parsing mermaid which loses components
+            export_dxf(self.canvas.current_parsed_data, path)
+            msg = f"✓ DXF saved to {path}"
+            self.status.showMessage(msg, 4000)
+            QMessageBox.information(self, "Exported", msg)
+        except Exception as e:
+            msg = f"DXF export failed: {e}"
+            self.status.showMessage(msg, 4000)
+            QMessageBox.critical(self, "Export Error", msg)
+
     # ── Edit / View actions ───────────────────────────────────────────────────
 
     def reset_diagram(self):  self.sidebar._reset()
@@ -3538,6 +3567,7 @@ class MainWindow(QMainWindow):
             "<li>SVG — scalable vector graphic (diagram only)</li>"
             "<li>PDF — A4 landscape via Qt print engine</li>"
             "<li>Mermaid code — .mmd text file</li>"
+            "<li>DXF — single-line diagram (AutoCAD / LibreCAD)</li>"
             "</ul>"
             "<p><b>Drag</b> participant boxes to reposition.<br>"
             "<b>Double-click</b> any text to edit it in-place.</p>"

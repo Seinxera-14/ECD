@@ -1,0 +1,573 @@
+(kicad_sch
+  (version 20240101)
+  (generator "eeschema")
+  (generator_version "10.0")
+  (uuid "e1fd5b98-d478-4a44-8e35-4f7e453653e3")
+  (paper "A3")
+
+  (title_block
+    (title "Generated Electrical Schematic")
+    (date "2026-05-15 10:05:06")
+    (rev "1.0")
+    (comment 1 "Voltage: 230V / 50Hz")
+    (comment 2 "L=Live  N=Neutral  PE=Protective Earth")
+  )
+
+  (lib_symbols
+
+    (symbol "PWR_BOX"
+      (pin_names hide)
+      (in_bom yes)
+      (on_board yes)
+      (property "Reference" "#PWR" (at 0 -3 0)
+        (effects (font (size 1.5 1.5)) hide))
+      (property "Value" "PWR" (at 0 3.5 0)
+        (effects (font (size 2.2 2.2))))
+      (symbol "PWR_BOX_0_1"
+        (rectangle (start -1.5 -1.5) (end 1.5 1.5)
+          (stroke (width 0.25)) (fill (type background)))
+        (pin power_in line (at -5.08 0 0) (length 3.58)
+          (name "~" (effects (font (size 1.5 1.5))))
+          (number "1" (effects (font (size 1.5 1.5)))))
+      )
+    )
+
+    (symbol "MCB_2P"
+      (pin_names hide)
+      (in_bom yes)
+      (on_board yes)
+      (property "Reference" "Q" (at 0 -8 0)
+        (effects (font (size 2.2 2.2))))
+      (property "Value" "MCB_2P" (at 0 8 0)
+        (effects (font (size 1.8 1.8))))
+      (symbol "MCB_2P_0_1"
+        (polyline (pts (xy -4 -2.54) (xy -2.5 -2.54)) (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy  2.5 -2.54) (xy  4 -2.54))  (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy -2.5 -2.54) (xy  2.5  0.5)) (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy -4  2.54) (xy -2.5  2.54))  (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy  2.5  2.54) (xy  4  2.54))  (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy -2.5  2.54) (xy  2.5  5.5)) (stroke (width 0.25)) (fill (type none)))
+        (circle (center 0 -2.54) (radius 0.6) (stroke (width 0.25)) (fill (type none)))
+        (circle (center 0  2.54) (radius 0.6) (stroke (width 0.25)) (fill (type none)))
+        (pin input line (at -7.62 -2.54 0) (length 3.62)
+          (name "L_IN"  (effects (font (size 1.5 1.5))))
+          (number "1"   (effects (font (size 1.5 1.5)))))
+        (pin output line (at 7.62 -2.54 180) (length 3.62)
+          (name "L_OUT" (effects (font (size 1.5 1.5))))
+          (number "2"   (effects (font (size 1.5 1.5)))))
+        (pin input line (at -7.62 2.54 0) (length 3.62)
+          (name "N_IN"  (effects (font (size 1.5 1.5))))
+          (number "3"   (effects (font (size 1.5 1.5)))))
+        (pin output line (at 7.62 2.54 180) (length 3.62)
+          (name "N_OUT" (effects (font (size 1.5 1.5))))
+          (number "4"   (effects (font (size 1.5 1.5)))))
+      )
+    )
+
+    (symbol "MCB_1P"
+      (pin_names hide)
+      (in_bom yes)
+      (on_board yes)
+      (property "Reference" "Q" (at 0 -7 0)
+        (effects (font (size 2.2 2.2))))
+      (property "Value" "MCB_1P" (at 0 7 0)
+        (effects (font (size 1.8 1.8))))
+      (symbol "MCB_1P_0_1"
+        (polyline (pts (xy -4 0) (xy -2.5 0))   (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy  2.5 0) (xy  4 0))   (stroke (width 0.25)) (fill (type none)))
+        (polyline (pts (xy -2.5 0) (xy  2.5 3)) (stroke (width 0.25)) (fill (type none)))
+        (circle (center 0 0) (radius 0.6) (stroke (width 0.25)) (fill (type none)))
+        (pin input line (at -7.62 0 0) (length 3.62)
+          (name "IN"  (effects (font (size 1.5 1.5))))
+          (number "1" (effects (font (size 1.5 1.5)))))
+        (pin output line (at 7.62 0 180) (length 3.62)
+          (name "OUT" (effects (font (size 1.5 1.5))))
+          (number "2" (effects (font (size 1.5 1.5)))))
+      )
+    )
+
+    (symbol "CONN_3P"
+      (pin_names hide)
+      (in_bom yes)
+      (on_board yes)
+      (property "Reference" "J" (at 3.5 -6 0)
+        (effects (font (size 2.2 2.2)) (justify left)))
+      (property "Value" "CONN_3P" (at 3.5 6 0)
+        (effects (font (size 1.8 1.8)) (justify left)))
+      (symbol "CONN_3P_0_1"
+        (rectangle (start -1.5 -3.8) (end 1.5 3.8)
+          (stroke (width 0.25)) (fill (type background)))
+        (pin passive line (at -5.08  2.54 0) (length 3.58)
+          (name "L"  (effects (font (size 1.5 1.5))))
+          (number "1" (effects (font (size 1.5 1.5)))))
+        (pin passive line (at -5.08  0    0) (length 3.58)
+          (name "N"  (effects (font (size 1.5 1.5))))
+          (number "2" (effects (font (size 1.5 1.5)))))
+        (pin passive line (at -5.08 -2.54 0) (length 3.58)
+          (name "PE" (effects (font (size 1.5 1.5))))
+          (number "3" (effects (font (size 1.5 1.5)))))
+      )
+    )
+
+  )
+
+  (symbol
+    (lib_id "PWR_BOX")
+    (at 40.6400 71.1200 0)
+    (unit 1)
+    (uuid "6c891725-e1b4-42ed-bb74-257bfc12dda7")
+    (property "Reference" "#PWR01"
+      (at 40.6400 73.6600 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "L  230V/50Hz"
+      (at 40.6400 66.0400 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 40.6400 71.1200 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 40.6400 71.1200 0)
+      (effects hide)
+    )
+  )
+  (symbol
+    (lib_id "PWR_BOX")
+    (at 40.6400 104.1400 0)
+    (unit 1)
+    (uuid "42ddae06-dd7b-426f-8bd8-dfcd2e3c42e7")
+    (property "Reference" "#PWR02"
+      (at 40.6400 109.2200 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "N  Neutral"
+      (at 40.6400 101.6000 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 40.6400 104.1400 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 40.6400 104.1400 0)
+      (effects hide)
+    )
+  )
+  (symbol
+    (lib_id "PWR_BOX")
+    (at 40.6400 124.4600 0)
+    (unit 1)
+    (uuid "6a2d03f6-cd20-47be-8f1d-0cde8b595872")
+    (property "Reference" "#PWR03"
+      (at 40.6400 127.0000 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "PE  Earth"
+      (at 40.6400 121.9200 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 40.6400 124.4600 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 40.6400 124.4600 0)
+      (effects hide)
+    )
+  )
+  (symbol
+    (lib_id "MCB_2P")
+    (at 78.7400 78.7400 0)
+    (unit 1)
+    (uuid "d481eeb0-525e-40ae-8aeb-b4d66af552a1")
+    (property "Reference" "Q1"
+      (at 78.7400 68.5800 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Main MCB 2P 63A"
+      (at 78.7400 86.3600 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 78.7400 78.7400 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 78.7400 78.7400 0)
+      (effects hide)
+    )
+  )
+  (wire
+    (pts (xy 40.6400 71.1200) (xy 71.1200 71.1200))
+    (stroke (width 0.25) (type default))
+    (uuid "64f23b71-25db-469f-9f2d-ffe25110642c")
+  )
+  (wire
+    (pts (xy 71.1200 71.1200) (xy 71.1200 76.2000))
+    (stroke (width 0.25) (type default))
+    (uuid "c0aace5e-2f88-4a5e-80a8-bada24015895")
+  )
+  (wire
+    (pts (xy 40.6400 104.1400) (xy 71.1200 104.1400))
+    (stroke (width 0.25) (type default))
+    (uuid "1b1861e4-bd77-4627-8242-1fbd2132e6fa")
+  )
+  (wire
+    (pts (xy 71.1200 104.1400) (xy 71.1200 81.2800))
+    (stroke (width 0.25) (type default))
+    (uuid "c0b04e6b-765c-4b84-a563-b2da54d278fc")
+  )
+  (wire
+    (pts (xy 86.3600 76.2000) (xy 119.3800 76.2000))
+    (stroke (width 0.25) (type default))
+    (uuid "41c5498e-3cba-4682-be69-1d5bb191a1ec")
+  )
+  (wire
+    (pts (xy 119.3800 76.2000) (xy 119.3800 66.0400))
+    (stroke (width 0.25) (type default))
+    (uuid "709dd095-f63c-4e53-a30e-489c827d34f8")
+  )
+  (wire
+    (pts (xy 119.3800 66.0400) (xy 119.3800 109.2200))
+    (stroke (width 0.25) (type default))
+    (uuid "6e962f7d-7535-4661-9d33-60da3b90a0dc")
+  )
+  (wire
+    (pts (xy 86.3600 81.2800) (xy 91.4400 81.2800))
+    (stroke (width 0.25) (type default))
+    (uuid "b6b28849-6dfc-4ea7-a714-0dbba7f6497b")
+  )
+  (label "N"
+    (at 91.4400 81.2800 0)
+    (effects (font (size 2 2)))
+    (uuid "f96f9b69-20d4-48de-809e-0acd216f111f")
+  )
+  (wire
+    (pts (xy 40.6400 124.4600) (xy 45.7200 124.4600))
+    (stroke (width 0.25) (type default))
+    (uuid "0f6d34d4-7732-4258-a8c0-27ed7b3fdf55")
+  )
+  (label "PE"
+    (at 45.7200 124.4600 0)
+    (effects (font (size 2 2)))
+    (uuid "540df2c7-0d55-4e5c-97a3-470821701500")
+  )
+  (junction
+    (at 119.3800 66.0400)
+    (diameter 0)
+    (color 0 0 0 0)
+    (uuid "37d2e499-42bf-4ac2-9d75-b5983d862d4b")
+  )
+  (wire
+    (pts (xy 119.3800 66.0400) (xy 152.4000 66.0400))
+    (stroke (width 0.25) (type default))
+    (uuid "9f78bba3-f9f3-4108-adbf-e915715832e9")
+  )
+  (symbol
+    (lib_id "MCB_1P")
+    (at 160.0200 66.0400 0)
+    (unit 1)
+    (uuid "40fc17ae-af9f-4dd0-9d9f-5d6f14a1acb7")
+    (property "Reference" "Q2"
+      (at 160.0200 58.4200 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Lighting MCB 1P 10A"
+      (at 160.0200 73.6600 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 160.0200 66.0400 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 160.0200 66.0400 0)
+      (effects hide)
+    )
+  )
+  (wire
+    (pts (xy 167.6400 66.0400) (xy 215.9000 66.0400))
+    (stroke (width 0.25) (type default))
+    (uuid "a2027b1c-b750-4fd1-bf83-b9aa4e4cc61f")
+  )
+  (wire
+    (pts (xy 215.9000 66.0400) (xy 215.9000 68.5800))
+    (stroke (width 0.25) (type default))
+    (uuid "dd37fffe-5252-46e2-bb92-6d114428502d")
+  )
+  (symbol
+    (lib_id "CONN_3P")
+    (at 220.9800 66.0400 0)
+    (unit 1)
+    (uuid "09e3c789-f775-410c-91ce-a1906fc04db3")
+    (property "Reference" "J1"
+      (at 223.5200 58.4200 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Lighting Load"
+      (at 223.5200 73.6600 0)
+      (effects (font (size 1.8 1.8)) (justify left))
+    )
+    (property "Footprint" ""
+      (at 220.9800 66.0400 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 220.9800 66.0400 0)
+      (effects hide)
+    )
+  )
+  (label "N"
+    (at 213.3600 66.0400 180)
+    (effects (font (size 2 2)))
+    (uuid "0b3c6a95-693e-4f82-bbc4-a4df5ea5dcb4")
+  )
+  (label "PE"
+    (at 213.3600 63.5000 180)
+    (effects (font (size 2 2)))
+    (uuid "ccf747bf-75dc-4908-935a-7c8cd105d9bc")
+  )
+  (junction
+    (at 119.3800 86.3600)
+    (diameter 0)
+    (color 0 0 0 0)
+    (uuid "7ef1252a-eb2c-49e4-89f1-a4b618d68c2a")
+  )
+  (wire
+    (pts (xy 119.3800 86.3600) (xy 152.4000 86.3600))
+    (stroke (width 0.25) (type default))
+    (uuid "a8eb3d02-2d32-435c-b121-846017cd968d")
+  )
+  (symbol
+    (lib_id "MCB_1P")
+    (at 160.0200 86.3600 0)
+    (unit 1)
+    (uuid "cc3100f4-026a-46fb-bc78-235e6ba0023b")
+    (property "Reference" "Q3"
+      (at 160.0200 78.7400 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Sockets MCB 1P 16A"
+      (at 160.0200 93.9800 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 160.0200 86.3600 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 160.0200 86.3600 0)
+      (effects hide)
+    )
+  )
+  (wire
+    (pts (xy 167.6400 86.3600) (xy 215.9000 86.3600))
+    (stroke (width 0.25) (type default))
+    (uuid "03546444-ec2e-4b47-9016-1391b7dddc73")
+  )
+  (wire
+    (pts (xy 215.9000 86.3600) (xy 215.9000 88.9000))
+    (stroke (width 0.25) (type default))
+    (uuid "dfde0dec-0c24-475d-b329-0c1b4f896ee4")
+  )
+  (symbol
+    (lib_id "CONN_3P")
+    (at 220.9800 86.3600 0)
+    (unit 1)
+    (uuid "c58fce1a-805a-40da-8c96-854ffc8c5ba7")
+    (property "Reference" "J2"
+      (at 223.5200 78.7400 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Power Sockets"
+      (at 223.5200 93.9800 0)
+      (effects (font (size 1.8 1.8)) (justify left))
+    )
+    (property "Footprint" ""
+      (at 220.9800 86.3600 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 220.9800 86.3600 0)
+      (effects hide)
+    )
+  )
+  (label "N"
+    (at 213.3600 86.3600 180)
+    (effects (font (size 2 2)))
+    (uuid "e40438e3-5d4c-428c-ad04-9bc672e623ff")
+  )
+  (label "PE"
+    (at 213.3600 83.8200 180)
+    (effects (font (size 2 2)))
+    (uuid "b8f1f027-bc84-4b5a-aafd-e82be189391b")
+  )
+  (junction
+    (at 119.3800 109.2200)
+    (diameter 0)
+    (color 0 0 0 0)
+    (uuid "28ca195b-14d4-4e1a-96cc-0ea720dc92b0")
+  )
+  (wire
+    (pts (xy 119.3800 109.2200) (xy 152.4000 109.2200))
+    (stroke (width 0.25) (type default))
+    (uuid "d35a04ce-49be-4fbb-9320-eb36caf0f9c5")
+  )
+  (symbol
+    (lib_id "MCB_1P")
+    (at 160.0200 109.2200 0)
+    (unit 1)
+    (uuid "3432bbe2-6542-43ed-b0ac-b192ac01b05d")
+    (property "Reference" "Q4"
+      (at 160.0200 101.6000 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Kitchen MCB 1P 20A"
+      (at 160.0200 116.8400 0)
+      (effects (font (size 1.8 1.8)))
+    )
+    (property "Footprint" ""
+      (at 160.0200 109.2200 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 160.0200 109.2200 0)
+      (effects hide)
+    )
+  )
+  (wire
+    (pts (xy 167.6400 109.2200) (xy 215.9000 109.2200))
+    (stroke (width 0.25) (type default))
+    (uuid "ba44146f-06c5-43c3-b770-588651c463b1")
+  )
+  (wire
+    (pts (xy 215.9000 109.2200) (xy 215.9000 111.7600))
+    (stroke (width 0.25) (type default))
+    (uuid "e31d5f1e-3b1a-4af3-b8f4-71b5c60594c6")
+  )
+  (symbol
+    (lib_id "CONN_3P")
+    (at 220.9800 109.2200 0)
+    (unit 1)
+    (uuid "ca6c445d-4f1b-4929-8968-01f5ce63cfc4")
+    (property "Reference" "J3"
+      (at 223.5200 101.6000 0)
+      (effects (font (size 2 2)))
+    )
+    (property "Value" "Kitchen Appliances"
+      (at 223.5200 116.8400 0)
+      (effects (font (size 1.8 1.8)) (justify left))
+    )
+    (property "Footprint" ""
+      (at 220.9800 109.2200 0)
+      (effects hide)
+    )
+    (property "Datasheet" ""
+      (at 220.9800 109.2200 0)
+      (effects hide)
+    )
+  )
+  (label "N"
+    (at 213.3600 109.2200 180)
+    (effects (font (size 2 2)))
+    (uuid "383bd822-f03c-4c57-ae76-18982915798b")
+  )
+  (label "PE"
+    (at 213.3600 106.6800 180)
+    (effects (font (size 2 2)))
+    (uuid "df37bbf7-72ae-4727-a5a4-b0377eac98bb")
+  )
+  (text "230V AC Single-Phase Distribution Board"
+    (at 147.3200 27.9400 0)
+    (effects (font (size 4.5 4.5) (bold yes)))
+  )
+  (text "Incoming Supply"
+    (at 40.6400 55.8800 0)
+    (effects (font (size 2.2 2.2) (bold yes)))
+  )
+  (text "230V / 50Hz"
+    (at 40.6400 58.4200 0)
+    (effects (font (size 1.8 1.8)))
+  )
+  (text "Live Bus"
+    (at 121.9200 55.8800 0)
+    (effects (font (size 1.8 1.8)))
+  )
+  (text "Neutral Bar"
+    (at 91.4400 83.8200 0)
+    (effects (font (size 1.8 1.8)))
+  )
+  (text "Earth Bar"
+    (at 45.7200 129.5400 0)
+    (effects (font (size 1.8 1.8)))
+  )
+
+  (symbol_instances
+    (path "/a6109b8b-40ba-489c-b520-7c00e43abd6a"
+      (reference "#PWR01")
+      (unit 1)
+      (value "L  230V/50Hz")
+      (footprint "")
+    )
+    (path "/67d71401-8cf7-4a59-b4a0-1f2c01ad1c48"
+      (reference "#PWR02")
+      (unit 1)
+      (value "N  Neutral")
+      (footprint "")
+    )
+    (path "/dab00fbb-dc73-413f-90df-8ca14ea32864"
+      (reference "#PWR03")
+      (unit 1)
+      (value "PE  Earth")
+      (footprint "")
+    )
+    (path "/49537660-40dd-4a01-bde5-430466888d47"
+      (reference "Q1")
+      (unit 1)
+      (value "Main MCB 2P 63A")
+      (footprint "")
+    )
+    (path "/b5bcb202-0f4e-4ee1-ad46-89ad04642dac"
+      (reference "Q2")
+      (unit 1)
+      (value "Lighting MCB 1P 10A")
+      (footprint "")
+    )
+    (path "/912ed729-7217-4a83-b86b-9d0fe3e82b4c"
+      (reference "J1")
+      (unit 1)
+      (value "Lighting Load")
+      (footprint "")
+    )
+    (path "/4fdb553d-ae4b-4332-9c55-3d070396a185"
+      (reference "Q3")
+      (unit 1)
+      (value "Sockets MCB 1P 16A")
+      (footprint "")
+    )
+    (path "/a9e7196d-873f-492a-b4b8-62d1dd5a7082"
+      (reference "J2")
+      (unit 1)
+      (value "Power Sockets")
+      (footprint "")
+    )
+    (path "/da10ac06-0620-4873-986f-9de25b08d578"
+      (reference "Q4")
+      (unit 1)
+      (value "Kitchen MCB 1P 20A")
+      (footprint "")
+    )
+    (path "/13b4b27f-85cb-4258-8756-e4bb8c61cb1a"
+      (reference "J3")
+      (unit 1)
+      (value "Kitchen Appliances")
+      (footprint "")
+    )
+  )
+
+  (sheet_instances
+    (path "/" (page "1"))
+  )
+)
